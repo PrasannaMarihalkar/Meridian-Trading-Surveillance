@@ -11,7 +11,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
   try {
     const db = await getDatabase();
     let query = 'SELECT * FROM accounts';
-    let params: any[] = [];
+    const params: any[] = [];
 
     // If TRADER, restrict to own account
     if (req.user?.role === 'TRADER') {
@@ -30,7 +30,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
 router.get('/:id', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = await getDatabase();
-    const accountId = parseInt(req.params.id, 10);
+    const accountId = parseInt(req.params.id as string, 10);
     const result = await db.query(
       `SELECT a.*, u.username, u.email,
               rl.max_order_qty, rl.max_order_notional, rl.max_position_qty, rl.max_open_orders, rl.price_collar_pct
@@ -69,7 +69,7 @@ const UpdateRiskSchema = z.object({
 
 router.put('/:id/risk-limits', authenticate, requireRole('ADMIN'), async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const accountId = parseInt(req.params.id, 10);
+    const accountId = parseInt(req.params.id as string, 10);
     const val = UpdateRiskSchema.parse(req.body);
     const db = await getDatabase();
 
@@ -96,7 +96,7 @@ router.put('/:id/risk-limits', authenticate, requireRole('ADMIN'), async (req: A
 // Account Positions & Portfolio
 router.get('/:id/positions', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const accountId = parseInt(req.params.id, 10);
+    const accountId = parseInt(req.params.id as string, 10);
     if (req.user?.role === 'TRADER' && req.user.accountId !== accountId) {
       res.status(403).json({ error: 'Forbidden' });
       return;

@@ -19,7 +19,7 @@ router.get('/', async (_req: Request, res: Response) => {
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const db = await getDatabase();
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(req.params.id as string, 10);
     const result = await db.query('SELECT * FROM instruments WHERE instrument_id = $1', [id]);
     if (result.rows.length === 0) {
       res.status(404).json({ error: 'Instrument not found' });
@@ -34,7 +34,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 // Order book snapshot (Level 2 ladder)
 router.get('/:id/order-book', async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(req.params.id as string, 10);
     const depth = parseInt((req.query.depth as string) || '10', 10);
     const snapshot = await TradingService.getOrderBookSnapshot(id, depth);
     res.json(snapshot);

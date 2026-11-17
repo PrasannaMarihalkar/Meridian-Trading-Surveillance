@@ -89,7 +89,7 @@ jobs:
           key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install ESLint and TypeScript ESLint plugin
-        run: npm install --no-save eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin
+        run: npm install --no-save eslint@8.57.0 @typescript-eslint/parser@6.21.0 @typescript-eslint/eslint-plugin@6.21.0
 
       - name: Run ESLint on backend
         run: npx eslint backend/ --ext .ts --max-warnings 50
@@ -144,6 +144,11 @@ jobs:
         with:
           path: node_modules
           key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Initialize test database
+        run: npx tsx scripts/init_db.ts
+        env:
+          NODE_ENV: test
 
       - name: Run backend API tests
         run: npx tsx tests/api.test.ts

@@ -36,7 +36,7 @@ router.get('/alerts', authenticate, requireRole('ANALYST', 'ADMIN'), async (req:
 // Single Alert Details with Investigation Notes
 router.get('/alerts/:id', authenticate, requireRole('ANALYST', 'ADMIN'), async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const alertId = parseInt(req.params.id, 10);
+    const alertId = parseInt(req.params.id as string, 10);
     const db = await getDatabase();
 
     const alertRes = await db.query('SELECT * FROM v_surveillance_summary WHERE alert_id = $1', [alertId]);
@@ -66,7 +66,7 @@ router.get('/alerts/:id', authenticate, requireRole('ANALYST', 'ADMIN'), async (
 // Update Alert Status
 router.put('/alerts/:id/status', authenticate, requireRole('ANALYST', 'ADMIN'), async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const alertId = parseInt(req.params.id, 10);
+    const alertId = parseInt(req.params.id as string, 10);
     const { status } = req.body;
     if (!['OPEN', 'IN_REVIEW', 'RESOLVED', 'FALSE_POSITIVE'].includes(status)) {
       res.status(400).json({ error: 'Invalid status' });
@@ -83,7 +83,7 @@ router.put('/alerts/:id/status', authenticate, requireRole('ANALYST', 'ADMIN'), 
 // Assign Alert to Analyst
 router.put('/alerts/:id/assign', authenticate, requireRole('ANALYST', 'ADMIN'), async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const alertId = parseInt(req.params.id, 10);
+    const alertId = parseInt(req.params.id as string, 10);
     const analystId = req.body.analystId || req.user?.userId;
     const updated = await SurveillanceService.assignAlert(alertId, analystId);
     res.json(updated);
@@ -95,7 +95,7 @@ router.put('/alerts/:id/assign', authenticate, requireRole('ANALYST', 'ADMIN'), 
 // Add Investigation Note
 router.post('/alerts/:id/notes', authenticate, requireRole('ANALYST', 'ADMIN'), async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const alertId = parseInt(req.params.id, 10);
+    const alertId = parseInt(req.params.id as string, 10);
     const { body } = req.body;
     if (!body || body.trim().length === 0) {
       res.status(400).json({ error: 'Note content cannot be empty' });

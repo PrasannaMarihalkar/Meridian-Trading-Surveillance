@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getDatabase } from '../../database/db';
-import { Order, OrderSide, OrderType, TimeInForce, Trade, Fill, Position } from '../types';
+import { Order, OrderSide, OrderType, TimeInForce, Trade } from '../types';
 import { broadcastMarketData } from '../websocket';
 
 export interface PlaceOrderInput {

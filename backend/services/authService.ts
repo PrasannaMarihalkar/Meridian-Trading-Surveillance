@@ -160,8 +160,8 @@ export class AuthService {
       [sessionId, user.user_id, params.ipAddress || '127.0.0.1', params.userAgent || 'Unknown']
     );
 
-    const { password_hash, ...cleanUser } = user;
-    return { user: cleanUser as User, token, accountId };
+    delete user.password_hash;
+    return { user: user as User, token, accountId };
   }
 
   static async getProfile(userId: number): Promise<User & { account?: any }> {

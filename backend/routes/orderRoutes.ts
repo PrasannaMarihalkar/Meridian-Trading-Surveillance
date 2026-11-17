@@ -83,7 +83,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
 // Cancel Order
 router.post('/:id/cancel', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const orderId = parseInt(req.params.id, 10);
+    const orderId = parseInt(req.params.id as string, 10);
     const db = await getDatabase();
 
     const orderRes = await db.query('SELECT account_id FROM orders WHERE order_id = $1', [orderId]);
