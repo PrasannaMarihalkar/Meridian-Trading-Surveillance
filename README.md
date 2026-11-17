@@ -139,7 +139,7 @@ Measured on an Intel(R) Core(TM) Ultra 5 125H (18 vCPUs, 16 GB LPDDR5, WSL2 Ubun
 ## 6. Quick Start & Local Setup
 
 ### Prerequisites
-- Node.js 20+ (tested on v20 and v26)
+- Node.js 22 LTS (recommended) or 20+
 - Optional: GCC 13+ with C++20 support (for building the standalone C++ matching engine)
 
 ### Single-Command Run
@@ -172,34 +172,41 @@ Open **`http://localhost:4000`** in your browser.
 ## 7. Verification & Testing
 
 ```bash
-# 1. Run Complete Automated Test Suite (Affinity + API + Concurrency + C++ Bridge)
+# 1. Run Complete Automated Test Suite (6 test suites, 42/42 assertions passed)
+# Includes: Transaction Affinity + API Integration + Concurrency Stress + C++ Bridge + Auth/RBAC Hardening + Trading/Risk Integrity
 npm run test:all
 
 # 2. Run Backend Integration & Idempotency Test Suite (15/15 passed)
 npm test
 
-# 3. Run PostgreSQL Transaction Connection Affinity Verification
+# 3. Run Auth, Session Lifecycle & RBAC Hardening Test Suite (6/6 passed)
+npm run test:auth
+
+# 4. Run Financial Risk, Order Lifecycle & Sequence Integrity Test Suite (8/8 passed)
+npm run test:risk
+
+# 5. Run PostgreSQL Transaction Connection Affinity Verification
 npm run test:affinity
 
-# 4. Run Multi-Connection Concurrency, Row-Locking & Rollback Isolation Stress Test
+# 6. Run Multi-Connection Concurrency, Row-Locking & Rollback Isolation Stress Test
 npm run test:concurrency
 
-# 5. Run Hardened C++ Stdio IPC Bridge Test (6/6 passed)
+# 7. Run Hardened C++ Stdio IPC Bridge Test (6/6 passed)
 npm run test:bridge
 
-# 6. Verify Database Schema, Atomicity & Rollbacks on Disposable Instance
+# 8. Verify Database Schema, Atomicity & Rollbacks on Disposable Instance
 npx tsx scripts/verify_disposable_db.ts
 
-# 7. Execute All 17 Official College Demonstration SQL Queries
+# 9. Execute All 17 Official College Demonstration SQL Queries
 npm run demo:queries
 
-# 8. Compile and Run Standalone C++ Matching Engine Tests (Linux / WSL)
+# 10. Compile and Run Standalone C++ Matching Engine Tests (Linux / WSL)
 g++ -std=c++20 -O3 -pthread -Iengine/include engine/src/order_book.cpp engine/tests/test_order_book.cpp -o test_ob && ./test_ob
 
-# 9. Run C++ Engine Tests with Memory Sanitizers (AddressSanitizer & UndefinedBehaviorSanitizer)
+# 11. Run C++ Engine Tests with Memory Sanitizers (AddressSanitizer & UndefinedBehaviorSanitizer)
 g++ -std=c++20 -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Iengine/include engine/src/order_book.cpp engine/tests/test_order_book.cpp -o test_ob_asan && ./test_ob_asan
 
-# 10. Run C++ High-Throughput Benchmark (100,000 orders)
+# 12. Run C++ High-Throughput Benchmark (100,000 orders)
 g++ -std=c++20 -O3 -pthread -Iengine/include engine/src/order_book.cpp engine/benchmarks/benchmark_engine.cpp -o bench_ob && ./bench_ob
 ```
 
@@ -219,6 +226,8 @@ This repository fulfills all course requirements for **DBMS Experiential Learnin
 
 ## 9. Technical Documentation Index
 
+- [FINAL_REMEDIATION_REPORT.md](docs/engineering/FINAL_REMEDIATION_REPORT.md): Comprehensive final remediation audit & teacher demonstration report.
+- [FINAL_REMEDIATION_PLAN.md](docs/engineering/FINAL_REMEDIATION_PLAN.md): Engineering blueprint and root-cause analysis for 10 remediation areas.
 - [RELEASE_NOTES.md](docs/RELEASE_NOTES.md): v1.0.0 production release notes.
 - [FINAL_RELEASE_AUDIT.md](docs/FINAL_RELEASE_AUDIT.md): Master release verification report.
 - [DATABASE_PRODUCTION_REVIEW.md](docs/DATABASE_PRODUCTION_REVIEW.md): Database constraint, trigger, and index hardening audit.

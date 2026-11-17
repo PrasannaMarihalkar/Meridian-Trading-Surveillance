@@ -40,6 +40,33 @@ class ExecutionMutex {
 
 const matchingMutex = new ExecutionMutex();
 
+function normalizeOrder(order: Order): Order {
+  return {
+    ...order,
+    order_id: Number(order.order_id),
+    account_id: Number(order.account_id),
+    instrument_id: Number(order.instrument_id),
+    price: parseFloat(String(order.price)),
+    quantity: Number(order.quantity),
+    filled_qty: Number(order.filled_qty)
+  };
+}
+
+function normalizeTrades(trades: Trade[]): Trade[] {
+  return trades.map(t => ({
+    ...t,
+    trade_id: Number(t.trade_id),
+    engine_seq: Number(t.engine_seq),
+    instrument_id: Number(t.instrument_id),
+    price: parseFloat(String(t.price)),
+    quantity: Number(t.quantity),
+    buy_order_id: Number(t.buy_order_id),
+    sell_order_id: Number(t.sell_order_id),
+    buyer_account_id: Number(t.buyer_account_id),
+    seller_account_id: Number(t.seller_account_id)
+  }));
+}
+
 export class TradingService {
   /**
    * Pre-trade Risk Filter & Validation
@@ -49,7 +76,7 @@ export class TradingService {
 
     // 1. Verify Instrument
     const instRes = await db.query(
-      `SELECT instrument_id, symbol, is_active, min_price, max_price, reference_price, tick_size
+      `SELECT instrument_id, symbol, is_active, min_price, max_price, reference_price, tick_size, lot_size
        FROM instruments WHERE instrument_id = $1`,
       [params.instrumentId]
     );
@@ -63,12 +90,24 @@ export class TradingService {
       throw new Error(`Trading is currently halted for ${inst.symbol}`);
     }
 
+    const lotSize = parseInt(inst.lot_size || '1', 10);
+    if (params.quantity % lotSize !== 0) {
+      throw new Error(`Order quantity ${params.quantity} must be an integer multiple of lot size ${lotSize}`);
+    }
+
+    const tickSize = parseFloat(inst.tick_size || '0.01');
     // Price checks for Limit orders
     if (params.orderType !== 'MARKET') {
       if (params.price < parseFloat(inst.min_price) || params.price > parseFloat(inst.max_price)) {
         throw new Error(
           `Price ${params.price} is outside allowed instrument range [${inst.min_price}, ${inst.max_price}]`
         );
+      }
+
+      // Check tick size alignment (round to 6 decimal places to prevent floating point remainder issues)
+      const remainder = Math.round((params.price / tickSize) * 1e6) % Math.round(1e6);
+      if (remainder !== 0) {
+        throw new Error(`Order price ${params.price} is not a valid multiple of tick size ${tickSize}`);
       }
     }
 
@@ -99,6 +138,22 @@ export class TradingService {
       throw new Error(`Order notional value ${notional.toFixed(2)} exceeds account max notional limit of ${acc.max_order_notional}`);
     }
 
+    // Max Net Position Quantity Check
+    if (acc.max_position_qty) {
+      const maxPos = parseInt(acc.max_position_qty, 10);
+      const posRes = await db.query(
+        `SELECT net_qty FROM positions WHERE account_id = $1 AND instrument_id = $2`,
+        [params.accountId, params.instrumentId]
+      );
+      const currentNet = posRes.rows.length > 0 ? parseInt(posRes.rows[0].net_qty, 10) : 0;
+      const projectedNet = params.side === 'BUY' ? (currentNet + params.quantity) : (currentNet - params.quantity);
+      if (Math.abs(projectedNet) > maxPos) {
+        throw new Error(
+          `Projected position (${projectedNet}) exceeds account maximum position limit of ${maxPos}`
+        );
+      }
+    }
+
     // Price Collar Check
     if (params.orderType !== 'MARKET' && acc.price_collar_pct) {
       const collarPct = parseFloat(acc.price_collar_pct);
@@ -122,11 +177,21 @@ export class TradingService {
       }
     }
 
-    // Cash check for BUY orders
+    // Cash check for BUY orders with reserved purchasing power calculation
     if (params.side === 'BUY') {
+      const reservedRes = await db.query(
+        `SELECT COALESCE(SUM((quantity - filled_qty) * price), 0) AS reserved_cash
+         FROM orders
+         WHERE account_id = $1 AND side = 'BUY' AND status IN ('OPEN', 'PARTIALLY_FILLED')`,
+        [params.accountId]
+      );
+      const reservedCash = parseFloat(reservedRes.rows[0].reserved_cash || '0');
       const cash = parseFloat(acc.cash_balance);
-      if (cash < notional) {
-        throw new Error(`Insufficient cash balance (${cash.toFixed(2)}) for order notional of ${notional.toFixed(2)}`);
+      const availableCash = cash - reservedCash;
+      if (availableCash < notional) {
+        throw new Error(
+          `Insufficient available cash (${availableCash.toFixed(2)}, reserved in open orders: ${reservedCash.toFixed(2)}) for order notional of ${notional.toFixed(2)}`
+        );
       }
     }
   }
@@ -173,7 +238,7 @@ export class TradingService {
           [existing.order_id]
         );
 
-        return { order: existing, trades: existingTradesRes.rows };
+        return { order: normalizeOrder(existing), trades: normalizeTrades(existingTradesRes.rows) };
       }
 
       let activeOrder: Order | null = null;
@@ -185,14 +250,8 @@ export class TradingService {
           await this.validateRiskLimits(input, tx);
 
           // Atomic sequence allocation for Order ID
-          let orderId: number;
-          try {
-            const oidRes = await tx.query(`SELECT nextval('order_id_seq') AS next_id`);
-            orderId = parseInt(oidRes.rows[0].next_id, 10);
-          } catch {
-            const oidRes = await tx.query('SELECT COALESCE(MAX(order_id), 5000) + 1 AS next_id FROM orders');
-            orderId = parseInt(oidRes.rows[0].next_id, 10);
-          }
+          const oidRes = await tx.query(`SELECT nextval('order_id_seq') AS next_id`);
+          const orderId = parseInt(oidRes.rows[0].next_id, 10);
 
           const tif = input.timeInForce || (input.orderType === 'IOC' ? 'IOC' : 'DAY');
 
@@ -220,28 +279,54 @@ export class TradingService {
 
           // Order Matching Engine Logic
           const oppositeSide: OrderSide = input.side === 'BUY' ? 'SELL' : 'BUY';
-          const priceCondition = input.orderType === 'MARKET' ? '' :
-            (input.side === 'BUY' ? 'AND price <= $3' : 'AND price >= $3');
           const sortOrder = input.side === 'BUY' ? 'ASC' : 'DESC';
 
-          // Row-level lock (FOR UPDATE) prevents concurrent double-matching of leaves_qty
-          const candidateSql = `
-            SELECT order_id, account_id, price, quantity, filled_qty, (quantity - filled_qty) AS leaves_qty
-            FROM orders
-            WHERE instrument_id = $1 AND side = $2 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND account_id <> $4 AND (quantity - filled_qty) > 0
-            ${priceCondition}
-            ORDER BY price ${sortOrder}, submitted_at ASC
-            FOR UPDATE
-          `;
+          let candidateSql: string;
+          let candidateParams: (string | number)[];
 
-          const candidateParams = input.orderType === 'MARKET'
-            ? [input.instrumentId, oppositeSide, input.accountId]
-            : [input.instrumentId, oppositeSide, input.price, input.accountId];
+          if (input.orderType === 'MARKET') {
+            candidateSql = `
+              SELECT order_id, account_id, price, quantity, filled_qty, (quantity - filled_qty) AS leaves_qty
+              FROM orders
+              WHERE instrument_id = $1 AND side = $2 AND account_id <> $3 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND (quantity - filled_qty) > 0
+              ORDER BY price ${sortOrder}, submitted_at ASC
+              FOR UPDATE
+            `;
+            candidateParams = [input.instrumentId, oppositeSide, input.accountId];
+          } else {
+            const priceCondition = input.side === 'BUY' ? 'AND price <= $4' : 'AND price >= $4';
+            candidateSql = `
+              SELECT order_id, account_id, price, quantity, filled_qty, (quantity - filled_qty) AS leaves_qty
+              FROM orders
+              WHERE instrument_id = $1 AND side = $2 AND account_id <> $3 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND (quantity - filled_qty) > 0
+              ${priceCondition}
+              ORDER BY price ${sortOrder}, submitted_at ASC
+              FOR UPDATE
+            `;
+            candidateParams = [input.instrumentId, oppositeSide, input.accountId, input.price];
+          }
 
           const candidates = await tx.query(candidateSql, candidateParams);
 
           const activeTotalQty = parseInt(String(activeOrder.quantity), 10);
           let remainingQty = activeTotalQty;
+
+          // Fill-Or-Kill (FOK) All-Or-None Validation
+          if (tif === 'FOK') {
+            const availableLiquidity = candidates.rows.reduce(
+              (sum, r) => sum + parseInt(String(r.leaves_qty), 10),
+              0
+            );
+            if (availableLiquidity < activeTotalQty) {
+              const updatedActiveRes = await tx.query<Order>(
+                `UPDATE orders SET status = 'CANCELLED', status_reason = 'FOK_UNFILLED_INSUFFICIENT_LIQUIDITY', updated_at = NOW()
+                 WHERE order_id = $1 RETURNING *`,
+                [activeOrder.order_id]
+              );
+              activeOrder = updatedActiveRes.rows[0];
+              return;
+            }
+          }
 
           for (const resting of candidates.rows) {
             if (remainingQty <= 0) break;
@@ -249,30 +334,42 @@ export class TradingService {
             const restingLeaves = parseInt(String(resting.leaves_qty), 10);
             if (restingLeaves <= 0) continue;
 
-            const matchQty = Math.min(remainingQty, restingLeaves);
-            if (matchQty <= 0) continue;
-
             const matchPrice = parseFloat(String(resting.price)); // Passive resting order price
 
-            // Generate Trade with atomic sequences
-            let nextTradeId: number;
-            let nextSeq: number;
-            try {
-              const tidRes = await tx.query(`SELECT nextval('trade_id_seq') AS next_tid`);
-              const seqRes = await tx.query(`SELECT nextval('engine_seq_gen') AS next_seq`);
-              nextTradeId = parseInt(tidRes.rows[0].next_tid, 10);
-              nextSeq = parseInt(seqRes.rows[0].next_seq, 10);
-            } catch {
-              const tidRes = await tx.query('SELECT COALESCE(MAX(trade_id), 8000) + 1 AS next_tid FROM trades');
-              const seqRes = await tx.query('SELECT COALESCE(MAX(engine_seq), 10000) + 1 AS next_seq FROM trades');
-              nextTradeId = parseInt(tidRes.rows[0].next_tid, 10);
-              nextSeq = parseInt(seqRes.rows[0].next_seq, 10);
+            // Market Order Price Collar Protection (5% deviation limit from reference price)
+            if (input.orderType === 'MARKET') {
+              const instRefRes = await tx.query(`SELECT reference_price FROM instruments WHERE instrument_id = $1`, [input.instrumentId]);
+              const refPrice = parseFloat(instRefRes.rows[0].reference_price);
+              const collarLimit = refPrice * 0.05;
+              if (input.side === 'BUY' && matchPrice > refPrice + collarLimit) {
+                break;
+              } else if (input.side === 'SELL' && matchPrice < refPrice - collarLimit) {
+                break;
+              }
             }
+
+            const matchQty = Math.min(remainingQty, restingLeaves);
+            if (matchQty <= 0) continue;
 
             const buyOrderId = input.side === 'BUY' ? activeOrder.order_id : resting.order_id;
             const sellOrderId = input.side === 'SELL' ? activeOrder.order_id : resting.order_id;
             const buyerAccountId = input.side === 'BUY' ? activeOrder.account_id : resting.account_id;
             const sellerAccountId = input.side === 'SELL' ? activeOrder.account_id : resting.account_id;
+
+            // Deadlock Prevention: Deterministic ascending lock ordering on counterparty accounts
+            const [firstAcc, secondAcc] = buyerAccountId < sellerAccountId
+              ? [buyerAccountId, sellerAccountId]
+              : [sellerAccountId, buyerAccountId];
+            await tx.query(
+              `SELECT account_id FROM accounts WHERE account_id IN ($1, $2) ORDER BY account_id FOR UPDATE`,
+              [firstAcc, secondAcc]
+            );
+
+            // Generate Trade with atomic sequences
+            const tidRes = await tx.query(`SELECT nextval('trade_id_seq') AS next_tid`);
+            const seqRes = await tx.query(`SELECT nextval('engine_seq_gen') AS next_seq`);
+            const nextTradeId = parseInt(tidRes.rows[0].next_tid, 10);
+            const nextSeq = parseInt(seqRes.rows[0].next_seq, 10);
 
             const tradeRes = await tx.query<Trade>(
               `INSERT INTO trades (
@@ -297,18 +394,10 @@ export class TradingService {
             trades.push(trade);
 
             // Generate Fills with atomic sequences (1 Buyer Fill and 1 Seller Fill)
-            let fillId1: number;
-            let fillId2: number;
-            try {
-              const fidRes1 = await tx.query(`SELECT nextval('fill_id_seq') AS next_fid`);
-              const fidRes2 = await tx.query(`SELECT nextval('fill_id_seq') AS next_fid`);
-              fillId1 = parseInt(fidRes1.rows[0].next_fid, 10);
-              fillId2 = parseInt(fidRes2.rows[0].next_fid, 10);
-            } catch {
-              const fidRes = await tx.query('SELECT COALESCE(MAX(fill_id), 9100) + 1 AS next_fid FROM fills');
-              fillId1 = parseInt(fidRes.rows[0].next_fid, 10);
-              fillId2 = fillId1 + 1;
-            }
+            const fidRes1 = await tx.query(`SELECT nextval('fill_id_seq') AS next_fid`);
+            const fidRes2 = await tx.query(`SELECT nextval('fill_id_seq') AS next_fid`);
+            const fillId1 = parseInt(fidRes1.rows[0].next_fid, 10);
+            const fillId2 = parseInt(fidRes2.rows[0].next_fid, 10);
 
             // Buyer Fill
             await tx.query(
@@ -339,18 +428,29 @@ export class TradingService {
           // Finalize incoming active order status
           const totalFilled = activeTotalQty - remainingQty;
           let finalStatus = activeOrder.status;
+          let statusReason: string | null = null;
 
           if (totalFilled === activeTotalQty) {
             finalStatus = 'FILLED';
           } else if (totalFilled > 0) {
-            finalStatus = (input.orderType === 'IOC' || input.orderType === 'MARKET') ? 'CANCELLED' : 'PARTIALLY_FILLED';
+            if (tif === 'IOC' || input.orderType === 'IOC' || input.orderType === 'MARKET') {
+              finalStatus = 'CANCELLED';
+              statusReason = 'IOC_RESIDUAL_CANCELLED';
+            } else {
+              finalStatus = 'PARTIALLY_FILLED';
+            }
           } else {
-            finalStatus = (input.orderType === 'IOC' || input.orderType === 'MARKET') ? 'CANCELLED' : 'OPEN';
+            if (tif === 'IOC' || input.orderType === 'IOC' || input.orderType === 'MARKET') {
+              finalStatus = 'CANCELLED';
+              statusReason = 'IOC_UNFILLED';
+            } else {
+              finalStatus = 'OPEN';
+            }
           }
 
           const updatedActiveRes = await tx.query<Order>(
-            `UPDATE orders SET filled_qty = $1, status = $2, updated_at = NOW() WHERE order_id = $3 RETURNING *`,
-            [totalFilled, finalStatus, activeOrder.order_id]
+            `UPDATE orders SET filled_qty = $1, status = $2, status_reason = $3, updated_at = NOW() WHERE order_id = $4 RETURNING *`,
+            [totalFilled, finalStatus, statusReason, activeOrder.order_id]
           );
 
           activeOrder = updatedActiveRes.rows[0];
@@ -375,7 +475,7 @@ export class TradingService {
                 `SELECT * FROM trades WHERE buy_order_id = $1 OR sell_order_id = $1 ORDER BY trade_id ASC`,
                 [existing.order_id]
               );
-              return { order: existing, trades: concurrentTrades.rows };
+              return { order: normalizeOrder(existing), trades: normalizeTrades(concurrentTrades.rows) };
             } else {
               const conflictErr = new Error('Idempotency key reused with differing order parameters');
               (conflictErr as unknown as { statusCode: number }).statusCode = 409;
@@ -408,7 +508,7 @@ export class TradingService {
         }
       }
 
-      return { order: activeOrder!, trades };
+      return { order: normalizeOrder(activeOrder!), trades: normalizeTrades(trades) };
     });
   }
 
@@ -458,7 +558,7 @@ export class TradingService {
         }
       }
 
-      return cancelledOrder!;
+      return normalizeOrder(cancelledOrder!);
     });
   }
 

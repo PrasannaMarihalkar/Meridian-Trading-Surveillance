@@ -24162,6 +24162,16 @@
   var X = createLucideIcon(__iconData21);
 
   // frontend/src/components/TradingTerminal.tsx
+  function generateClientUuid() {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16 | 0;
+      const v = c === "x" ? r : r & 3 | 8;
+      return v.toString(16);
+    });
+  }
   function TradingTerminal({ user }) {
     const [instruments, setInstruments] = (0, import_react4.useState)([]);
     const [selectedInstId, setSelectedInstId] = (0, import_react4.useState)(1);
@@ -24174,6 +24184,10 @@
     const [isSubmitting, setIsSubmitting] = (0, import_react4.useState)(false);
     const [orderError, setOrderError] = (0, import_react4.useState)(null);
     const [orderSuccess, setOrderSuccess] = (0, import_react4.useState)(null);
+    const [activeIdempotencyKey, setActiveIdempotencyKey] = (0, import_react4.useState)(() => generateClientUuid());
+    (0, import_react4.useEffect)(() => {
+      setActiveIdempotencyKey(generateClientUuid());
+    }, [selectedInstId, side, orderType, price, quantity]);
     const [orders, setOrders] = (0, import_react4.useState)([]);
     const [trades, setTrades] = (0, import_react4.useState)([]);
     const [positions, setPositions] = (0, import_react4.useState)([]);
@@ -24262,11 +24276,7 @@
       setOrderError(null);
       setOrderSuccess(null);
       try {
-        const clientOrderId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-          const r = Math.random() * 16 | 0;
-          const v = c === "x" ? r : r & 3 | 8;
-          return v.toString(16);
-        });
+        const clientOrderId = activeIdempotencyKey;
         const res = await apiRequest("/orders", {
           method: "POST",
           headers: {
@@ -24282,6 +24292,7 @@
             clientOrderId
           })
         });
+        setActiveIdempotencyKey(generateClientUuid());
         const tradeCount = res.trades?.length || 0;
         setOrderSuccess(
           `Order #${res.order.order_id} submitted (${res.order.status}). ${tradeCount > 0 ? `Matched in ${tradeCount} execution(s)!` : "Resting on book."}`

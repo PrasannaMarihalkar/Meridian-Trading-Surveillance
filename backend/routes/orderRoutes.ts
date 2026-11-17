@@ -147,8 +147,13 @@ router.post('/:id/cancel', authenticate, async (req: AuthenticatedRequest, res: 
     }
 
     const targetAccountId = parseInt(orderRes.rows[0].account_id, 10);
-    if (req.user?.role === 'TRADER' && req.user.accountId !== targetAccountId) {
-      res.status(403).json({ error: 'Forbidden: Cannot cancel order belonging to another trader' });
+    const userRole = req.user?.role;
+    if (userRole === 'ADMIN') {
+      // Admin is authorized to cancel any order
+    } else if (userRole === 'TRADER' && req.user?.accountId === targetAccountId) {
+      // Trader is authorized to cancel their own order
+    } else {
+      res.status(403).json({ error: 'Forbidden: Insufficient permissions to cancel order' });
       return;
     }
 

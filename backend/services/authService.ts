@@ -27,30 +27,26 @@ export class AuthService {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(params.password, salt);
 
-    // Get next user_id
-    const idRes = await db.query('SELECT COALESCE(MAX(user_id), 100) + 1 AS next_id FROM users');
-    const nextUserId = parseInt(idRes.rows[0].next_id, 10);
-
     const userRes = await db.query<User>(
       `INSERT INTO users (user_id, email, username, password_hash, role, is_active, created_at)
-       VALUES ($1, $2, $3, $4, $5, TRUE, NOW())
+       VALUES (nextval('user_id_seq'), $1, $2, $3, $4, TRUE, NOW())
        RETURNING user_id, email, username, role, is_active, failed_logins, locked_until, last_login_at, created_at`,
-      [nextUserId, params.email.toLowerCase(), params.username, passwordHash, params.role]
+      [params.email.toLowerCase(), params.username, passwordHash, params.role]
     );
     const newUser = userRes.rows[0];
+    const nextUserId = newUser.user_id;
 
     let accountId: number | undefined;
 
     // If TRADER, automatically provision trading account & default risk limits
     if (params.role === 'TRADER') {
-      const accIdRes = await db.query('SELECT COALESCE(MAX(account_id), 1000) + 1 AS next_id FROM accounts');
-      accountId = parseInt(accIdRes.rows[0].next_id, 10);
-
-      await db.query(
+      const accRes = await db.query(
         `INSERT INTO accounts (account_id, user_id, owner_role, cash_balance, created_at)
-         VALUES ($1, $2, $3, 1000000.0000, NOW())`,
-        [accountId, nextUserId, 'TRADER']
+         VALUES (nextval('account_id_seq'), $1, $2, 1000000.0000, NOW())
+         RETURNING account_id`,
+        [nextUserId, 'TRADER']
       );
+      accountId = parseInt(accRes.rows[0].account_id, 10);
 
       await db.query(
         `INSERT INTO risk_limits (account_id, max_order_qty, max_order_notional, max_position_qty, max_open_orders, price_collar_pct, updated_at)
@@ -59,12 +55,14 @@ export class AuthService {
       );
     }
 
+    const sessionId = randomUUID();
     const tokenPayload: AuthTokenPayload = {
       userId: newUser.user_id,
       username: newUser.username,
       email: newUser.email,
       role: newUser.role,
-      accountId
+      accountId,
+      sessionId
     };
 
     const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '12h' });
@@ -73,7 +71,7 @@ export class AuthService {
     await db.query(
       `INSERT INTO sessions (session_id, user_id, created_at, expires_at, ip_address, user_agent)
        VALUES ($1, $2, NOW(), NOW() + INTERVAL '12 hours', '127.0.0.1', 'MeridianClient/1.0')`,
-      [randomUUID(), newUser.user_id]
+      [sessionId, newUser.user_id]
     );
 
     return { user: newUser, token, accountId };
@@ -142,18 +140,19 @@ export class AuthService {
       }
     }
 
+    const sessionId = randomUUID();
     const tokenPayload: AuthTokenPayload = {
       userId: user.user_id,
       username: user.username,
       email: user.email,
       role: user.role,
-      accountId
+      accountId,
+      sessionId
     };
 
     const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '12h' });
 
     // Store session record
-    const sessionId = randomUUID();
     await db.query(
       `INSERT INTO sessions (session_id, user_id, created_at, expires_at, ip_address, user_agent)
        VALUES ($1, $2, NOW(), NOW() + INTERVAL '12 hours', $3, $4)`,

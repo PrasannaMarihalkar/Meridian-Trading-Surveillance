@@ -2,6 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../api';
 import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, RefreshCw, XCircle, ShieldAlert, CheckCircle2 } from 'lucide-react';
 
+function generateClientUuid(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 interface Instrument {
   instrument_id: number;
   symbol: string;
@@ -41,6 +52,12 @@ export function TradingTerminal({ user }: { user: any }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [orderSuccess, setOrderSuccess] = useState<string | null>(null);
+  const [activeIdempotencyKey, setActiveIdempotencyKey] = useState<string>(() => generateClientUuid());
+
+  // Generate a new idempotency key when user changes order parameters
+  useEffect(() => {
+    setActiveIdempotencyKey(generateClientUuid());
+  }, [selectedInstId, side, orderType, price, quantity]);
 
   // Table Data State
   const [orders, setOrders] = useState<any[]>([]);
@@ -144,14 +161,8 @@ export function TradingTerminal({ user }: { user: any }) {
     setOrderSuccess(null);
 
     try {
-      // Generate client-side UUID for idempotency across network retries
-      const clientOrderId = typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-            const r = Math.random() * 16 | 0;
-            const v = c === 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-          });
+      // Use stable client-supplied idempotency key preserved across retries
+      const clientOrderId = activeIdempotencyKey;
 
       const res = await apiRequest<any>('/orders', {
         method: 'POST',
@@ -168,6 +179,9 @@ export function TradingTerminal({ user }: { user: any }) {
           clientOrderId
         })
       });
+
+      // On successful submission, generate a fresh idempotency key for the next order
+      setActiveIdempotencyKey(generateClientUuid());
 
       const tradeCount = res.trades?.length || 0;
       setOrderSuccess(

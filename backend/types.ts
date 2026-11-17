@@ -24,6 +24,7 @@ export interface AuthTokenPayload {
   email: string;
   role: UserRole;
   accountId?: number;
+  sessionId: string;
 }
 
 export interface Account {

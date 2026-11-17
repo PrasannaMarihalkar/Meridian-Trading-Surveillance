@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '22'
 
 jobs:
   # ─────────────────────────────────────────────────────────────────
@@ -168,6 +168,20 @@ jobs:
           DATABASE_URL: postgresql://meridian:meridian_ci_password@localhost:5432/meridian_test
           NODE_ENV: test
 
+      - name: Run RBAC & authentication security tests (Native PostgreSQL 16)
+        run: npx tsx tests/test_auth_rbac_hardening.ts
+        env:
+          DATABASE_URL: postgresql://meridian:meridian_ci_password@localhost:5432/meridian_test
+          NODE_ENV: test
+          JWT_SECRET: ${{ secrets.JWT_SECRET || 'ci-test-secret-do-not-use-in-production' }}
+
+      - name: Run trading, risk & quantitative integrity tests (Native PostgreSQL 16)
+        run: npx tsx tests/test_trading_risk_integrity.ts
+        env:
+          DATABASE_URL: postgresql://meridian:meridian_ci_password@localhost:5432/meridian_test
+          NODE_ENV: test
+          JWT_SECRET: ${{ secrets.JWT_SECRET || 'ci-test-secret-do-not-use-in-production' }}
+
       - name: Run backend API tests (Native PostgreSQL 16)
         run: npx tsx tests/api.test.ts
         env:
@@ -185,6 +199,8 @@ jobs:
         run: |
           npx tsx scripts/init_db.ts
           npx tsx tests/test_transaction_affinity.ts
+          npx tsx tests/test_auth_rbac_hardening.ts
+          npx tsx tests/test_trading_risk_integrity.ts
           npx tsx tests/api.test.ts
           npx tsx tests/concurrency.test.ts
         env:
