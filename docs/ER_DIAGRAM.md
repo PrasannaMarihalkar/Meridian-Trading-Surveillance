@@ -25,7 +25,7 @@ As specified by the PES University DBMS Experiential Learning guidelines, this E
 - **Single Line:** Partial participation.
 
 > [!IMPORTANT]
-> The primary college submission PDF is preserved at [MERIDIAN_ER_Diagram_Chen_Notation.pdf](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf), structured into 7 rigorous pages matching this specification.
+> The primary college submission PDF is preserved at [MERIDIAN_ER_Diagram_Chen_Notation.pdf](college/MERIDIAN_ER_Diagram_Chen_Notation.pdf), structured into 7 rigorous pages matching this specification.
 
 ---
 
@@ -179,10 +179,10 @@ The 17 entities are grouped across four logical domains:
 ## 4. Visual Layout Summary
 
 Detailed page-by-page Chen diagrams matching college viva expectations:
-- **Page 1:** Identity & Account Management ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 1](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=1))
-- **Page 2:** Order Management ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 2](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=2))
-- **Page 3:** Trade Execution & Settlement ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 3](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=3))
-- **Page 4:** Portfolio & Watchlist Associative Models ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 4](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=4))
-- **Page 5:** Surveillance Architecture ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 5](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=5))
-- **Page 6:** Alert Notes & System Auditing ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 6](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=6))
-- **Page 7:** Global Summary Schema ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 7](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=7))
+- **Page 1:** Identity & Account Management ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 1](college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=1))
+- **Page 2:** Order Management ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 2](college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=2))
+- **Page 3:** Trade Execution & Settlement ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 3](college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=3))
+- **Page 4:** Portfolio & Watchlist Associative Models ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 4](college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=4))
+- **Page 5:** Surveillance Architecture ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 5](college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=5))
+- **Page 6:** Alert Notes & System Auditing ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 6](college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=6))
+- **Page 7:** Global Summary Schema ([MERIDIAN_ER_Diagram_Chen_Notation.pdf, Page 7](college/MERIDIAN_ER_Diagram_Chen_Notation.pdf#page=7))

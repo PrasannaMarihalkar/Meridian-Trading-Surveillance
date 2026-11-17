@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log
+database/pgdata
+.env
+.env.*
+.git
+.github
+engine/build
+engine/bin
+*.o
+*.a
+*.so
+*.exe
+tests
+docs
+coverage

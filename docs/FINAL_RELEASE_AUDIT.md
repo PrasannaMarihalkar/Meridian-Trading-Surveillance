@@ -158,7 +158,7 @@ Verified via browser subagent automation against `http://localhost:4000`:
 - **Cross-Site Scripting (XSS):** React JSX default HTML-entity escaping protects all user and analyst note inputs.
 
 ### 3.7 Documentation Verification
-- **Chen ER Diagram (`docs/ER_DIAGRAM.md`):** Conforms strictly to Peter Chen notation standards (rectangles for strong entities, diamonds for relationships, ovals for attributes, underlined keys). Cross-referenced with the 7-page college submission PDF at [MERIDIAN_ER_Diagram_Chen_Notation.pdf](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf).
+- **Chen ER Diagram (`docs/ER_DIAGRAM.md`):** Conforms strictly to Peter Chen notation standards (rectangles for strong entities, diamonds for relationships, ovals for attributes, underlined keys). Cross-referenced with the 7-page college submission PDF at [MERIDIAN_ER_Diagram_Chen_Notation.pdf](college/MERIDIAN_ER_Diagram_Chen_Notation.pdf).
 - **Relational Schema & Normalization (`docs/RELATIONAL_SCHEMA.md`):** Contains formal relational definitions, candidate keys, and mathematical proofs for 1NF, 2NF, 3NF, and BCNF across all 17 tables.
 - **Data Dictionary (`docs/DATA_DICTIONARY.md`):** Complete column-by-column inventory including SQL types, nullability, defaults, check constraints, foreign keys, and descriptions.
 - **College Demonstration Guide (`docs/DEMO_GUIDE.md`):** All 17 demonstration queries documented with business justification and expected outputs.

@@ -1,155 +1,226 @@
 # MERIDIAN
 
-> **High-Performance Order Matching Engine with Multi-Paradigm Persistence and Real-Time Market Surveillance**
+[![C++20](https://img.shields.io/badge/Language-C%2B%2B20-00599C?style=flat&logo=c%2B%2B)](engine/)
+[![TypeScript](https://img.shields.io/badge/Language-TypeScript%205.7-3178C6?style=flat&logo=typescript)](backend/)
+[![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016%20(BCNF)-4169E1?style=flat&logo=postgresql)](database/)
+[![React](https://img.shields.io/badge/Frontend-React%2018%20%2F%20Tailwind-61DAFB?style=flat&logo=react)](frontend/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![CI Pipeline](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?style=flat&logo=githubactions)](.github/workflows/ci.yml)
 
-**Academic Institution:** PES University, Department of Computer Science and Engineering  
-**Course:** DBMS Experiential Learning — Level 3  
-**Course Instructor:** Dr. Nagasundari S  
-**Student & Author:** Prasanna Marihalkar (USN: PES1UG24CS684)  
-**System Architecture:** C++20 Low-Latency Systems Core + 17-Entity PostgreSQL Relational Ledger + Vector Surveillance + Next.js/React Full-Stack Interface  
+> **High-Performance C++20 Order Matching Engine with PostgreSQL-Backed Trading Workflows, Real-Time Market Data and Multi-Dimensional Market Surveillance.**
+
+**Institution:** PES University, Department of Computer Science & Engineering  
+**Academic Course:** DBMS Experiential Learning — Level 3  
+**Faculty Evaluator:** Dr. Nagasundari S  
+**Student & Author:** Prasanna Marihalkar (`PES1UG24CS684` / `@PrasannaMarihalkar`)  
 
 ---
 
-## 1. Project Overview & Problem Statement
+## 1. System Overview & Problem Statement
 
-Modern financial exchanges match orders in microseconds while simultaneously generating enormous volumes of structured, semi-structured, and pattern-based telemetry. Unlike conventional CRUD applications, MERIDIAN's core technical challenge is maintaining **strict transactional correctness and consistency under high-frequency, concurrent state transitions**, while streaming real-time market data and monitoring order-flow for market abuse (spoofing, layering, and quote stuffing).
+Financial market infrastructure operates under two conflicting requirements:
+1. **Ultra-Low Latency Execution:** Order books must process limit, market, and IOC orders in sub-microsecond timeframes without mutex contention or dynamic memory allocation.
+2. **Strict Transactional Persistence & Compliance:** Every match must produce atomic, side-specific clearing records, rebalance cash and position ledgers, maintain an immutable audit trail, and monitor order flow for abusive patterns (such as spoofing, layering, and quote stuffing).
 
-MERIDIAN addresses this challenge through a multi-tier, multi-paradigm architecture:
-1. **C++20 Matching Engine:** Price-time priority limit order book with a cacheline-aligned lock-free Single-Producer Single-Consumer (SPSC) ring buffer, achieving over **4.14 million orders/second with a 153-nanosecond median latency**.
-2. **PostgreSQL Relational Core:** 17 normalized entities (BCNF) guaranteeing atomic trade settlement, side-specific fills (`UNIQUE (trade_id, side)`), automated position recalculation triggers, and an immutable audit log.
-3. **Behavioral Surveillance Engine:** Hand-engineered 8-dimensional feature vectors (`order_cancel_ratio`, `quote_to_trade_ratio`, `median_lifetime_ms`, `size_skew`, etc.) classified against known manipulative patterns using **vector cosine similarity**.
-4. **Institutional Trading & Compliance Web Portal:** Dark-mode, high-density React/TypeScript interface with live Level 2 order books, trade blotters, alert triage, and an interactive College Showcase running all 17 demonstration queries live.
+**MERIDIAN** resolves this trade-off through a decoupled, multi-paradigm architecture:
+- **C++20 Matching Engine Core:** Continuous double auction engine utilizing intrusive doubly-linked price levels, a lock-free Single-Producer Single-Consumer (SPSC) ring buffer, and UDP sequence gap detection. Benchmarked at **~3.9 million orders/second** with **152 ns median latency**.
+- **PostgreSQL Relational Ledger:** 17 normalized entities conforming strictly to **Boyce-Codd Normal Form (BCNF)**, 4 analytical views, settlement triggers, and an immutable append-only audit trail.
+- **Multi-Dimensional Surveillance Engine:** Extracts an 8-dimensional behavioral feature vector from live order flow and computes **vector cosine similarity** against manipulative benchmark signatures.
+- **Institutional Web Terminal:** High-density dark-theme trading interface with real-time Level 2 book ladders, order blotters, surveillance consoles, and an interactive college query runner.
 
 ---
 
 ## 2. High-Level System Architecture
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        WEB PRESENTATION TIER                           │
-│  React 18 / TypeScript / Tailwind CSS / Lucide / WebSockets            │
-│  - Trader Terminal: Live L2 Order Book Ladder, Ticket, Blotter, P&L    │
-│  - Compliance Console: 8-D Feature Radar, Alert Triage, Notes Search   │
-│  - College Showcase: Chen ERD Viewer & 17 Live SQL Query Runners       │
-└─────────────────────────────────┬──────────────────────────────────────┘
-                                  │ HTTP REST (JSON) + WebSocket (Live Stream)
-┌─────────────────────────────────▼──────────────────────────────────────┐
-│                        APPLICATION & API GATEWAY                       │
-│  Node.js / Express / TypeScript                                        │
-│  - JWT & Bcrypt Authentication with RBAC (Trader / Analyst / Admin)    │
-│  - Pre-Trade Risk Filter (5% Price Collar, Max Qty, Cash Sufficiency)   │
-│  - 8-Dimensional Behavioral Feature Extractor & Cosine Classifier      │
-│  - Real-Time WebSocket Publisher                                       │
-└──────────────────┬──────────────────────────────┬──────────────────────┘
-                   │ SQL Transactions / Queries    │ IPC / POSIX / TCP Sockets
-┌──────────────────▼──────────────────┐  ┌────────▼──────────────────────┐
-│       DATABASE PERSISTENCE TIER      │  │        C++ SYSTEMS TIER       │
-│  PostgreSQL 16+ (17 Entities)        │  │  - Price-Time Limit Order Book│
-│  - Strict ACID guarantees            │  │  - Lock-Free SPSC Ring Buffer │
-│  - Settlement Triggers & Positions   │  │  - Deterministic Trade Match  │
-│  - Stored Procedures (P&L & Cosine)  │  │  - UDP Multicast Publisher    │
-│  - GIN Index on tsvector (Notes)     │  │  - ITCH/MoldUDP Gap Detection │
-│  - Immutable Audit Log Ledger        │  │  - C++20 / RAII / CMake       │
-└──────────────────────────────────────┘  └──────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph UI ["Client Presentation Tier (React 18 / Tailwind)"]
+        A1[Trading Terminal & L2 Book Ladder]
+        A2[Surveillance & Investigation Console]
+        A3[System Audit & Stream Offsets]
+        A4[PES College Showcase & Live Query Runner]
+    end
+
+    subgraph GW ["Application Gateway & API Core (Node.js / Express)"]
+        B1[JWT / RBAC Authentication & Rate Limiter]
+        B2[Pre-Trade Risk Validator: Collars & Limits]
+        B3[C++ IPC Bridge / TypeScript Auction Engine]
+        B4[8-D Vector Feature Extractor & Cosine Engine]
+        B5[WebSocket Publisher: LOB & Trade Ticks]
+    end
+
+    subgraph ENG ["Low-Latency Systems Core (C++20)"]
+        C1[OrderBook: Price-Time Continuous Auction]
+        C2[Intrusive Doubly-Linked Price Levels]
+        C3[Lock-Free SPSC Ring Buffer: alignas 64]
+        C4[UDP Packet Sequence Gap Detector]
+    end
+
+    subgraph DB ["Relational Persistence Tier (PostgreSQL 16 BCNF / PGlite)"]
+        D1[(17 Relational Tables: Users, Orders, Trades, Fills)]
+        D2[(Settlement Triggers: Cash Debits & Position Updates)]
+        D3[(Vector Cosine Similarity & Realized PnL Stored Procedures)]
+        D4[(Full-Text Search tsvector GIN Index)]
+        D5[(Engine-Enforced Immutable Audit Log)]
+    end
+
+    UI <-->|HTTP REST & WebSocket Stream| GW
+    GW <-->|Bidirectional stdio IPC Bridge| ENG
+    GW <-->|ACID Transactions & Row-Level Locks| DB
 ```
 
 ---
 
-## 3. Seven Advanced Database Concepts Demonstrated
+## 3. Core Subsystems
 
-1. **ACID Transactions:** Atomic multi-table updates across `orders`, `trades`, `fills`, and `positions`.
-2. **Advanced Relational Views:** `v_top_of_book` (live BBO & spreads), `v_portfolio_summary` (mark-to-market valuations and unrealized P&L), `v_trade_blotter`, `v_surveillance_summary`.
-3. **Stored Procedures & Functions:** Weighted average cost realized P&L calculator (`fn_calculate_realized_pnl`) and vector cosine similarity (`fn_cosine_similarity`).
-4. **Automated Triggers:** Real-time position updates on fill insertion (`trg_fills_settlement`), automatic order state audit logging (`trg_orders_audit`), and full-text search indexing (`trg_alert_notes_tsv`).
-5. **Multi-Column & Specialized Indexing:** Composite unique constraints (`UNIQUE (trade_id, side)`, `UNIQUE (account_id, instrument_id, window_start)`), and GIN inverted index on `alert_notes.body_tsv`.
-6. **Vector Similarity Search:** Metric-space cosine similarity matching 8-D session vectors against known abuse signatures.
-7. **Domain Constraints & BCNF Normalization:** 100% of relations satisfy Boyce-Codd Normal Form with zero insertion, update, or deletion anomalies.
+### 3.1 C++20 Order Matching Engine (`engine/`)
+- **Price-Time Priority (FIFO):** Bids are sorted descending (`price DESC, time ASC`); asks are sorted ascending (`price ASC, time ASC`).
+- **Memory Efficiency:** Resting orders reside in pre-allocated intrusive doubly-linked lists. Inserting or removing resting orders takes $O(1)$ time with zero dynamic allocation on the fast path.
+- **Fixed-Point Pricing:** Prices are mapped to 64-bit integer ticks (`price = double * 10,000`), eliminating floating-point rounding errors and division overhead.
+- **Lock-Free SPSC Queue (`include/spsc_queue.hpp`):** Single-Producer Single-Consumer circular queue with atomic head/tail indices isolated on independent 64-byte cache lines to eliminate false sharing.
+- **UDP Gap Detection (`include/gap_detector.hpp`):** Tracks monotonic sequence numbers across multicast market feeds, identifying packet drops and out-of-order deliveries.
+
+### 3.2 Relational Database Architecture (`database/`)
+The database contains **17 entities in Boyce-Codd Normal Form (BCNF)** across four domains:
+1. **Identity & Accounts:** `users`, `sessions`, `accounts`, `risk_limits`
+2. **Trading Master Data & Execution:** `instruments`, `orders`, `trades`, `fills`, `positions`, `watchlists`
+3. **Surveillance & Compliance:** `surveillance_sessions`, `surveillance_patterns`, `alerts`, `alert_notes`, `surveillance_feature_stats`
+4. **System Ledger & Offsets:** `audit_log`, `engine_offsets`
+
+**Database Highlights:**
+- **Side-Specific Settlement:** Every matched trade produces exactly one `BUY` and one `SELL` fill record in `fills`, enforced by `UNIQUE(trade_id, side)`.
+- **Automatic Settlement Trigger (`trg_fills_settlement`):** Automatically debits/credits cash balances and updates position net quantities and weighted average costs.
+- **Immutable Audit Log (`trg_audit_log_immutable`):** Engine-enforced database trigger rejects any `UPDATE` or `DELETE` issued against `audit_log`.
+- **Full-Text Search:** Case investigator notes indexed using PostgreSQL `tsvector` and GIN index for sub-millisecond keyword lookup.
+
+### 3.3 Market Surveillance Engine (`backend/services/surveillanceService.ts`)
+Extracts an 8-dimensional feature vector across rolling trading windows:
+1. `order_cancel_ratio`
+2. `quote_to_trade_ratio`
+3. `median_lifetime_ms`
+4. `size_skew`
+5. `msg_rate_per_s`
+6. `book_imbalance_impact` (derived from net order volume disparity)
+7. `opposite_side_fill_ratio` (fills executed on opposite side of resting orders)
+8. `layering_depth` (number of distinct price tiers populated)
+
+Vectors are normalized and compared against seeded manipulation benchmarks using vector cosine similarity (`fn_cosine_similarity`). If similarity exceeds 0.85 or rule flags trip, an alert is raised and streamed over WebSockets.
 
 ---
 
-## 4. Quickstart & Local Setup
+## 4. UI Preview
+
+![MERIDIAN Trading Terminal](assets/screenshots/meridian_terminal_preview.png)
+
+---
+
+## 5. Performance Benchmarks
+
+Measured on an Intel(R) Core(TM) Ultra 5 125H (18 vCPUs, 16 GB LPDDR5, WSL2 Ubuntu 24.04, GCC 13.3.0 `-O3`):
+
+| Subsystem | Metric | Measured Value | Notes |
+|---|---|:---:|---|
+| **C++ Matching Engine** | Throughput | **3,886,214 orders/sec** | 100,000 orders across continuous double auction |
+| **C++ Matching Engine** | Latency (p50) | **152.5 ns** | Sub-microsecond median match time |
+| **C++ Matching Engine** | Latency (p90) | **221.5 ns** | 90th percentile under heavy order flow |
+| **C++ Matching Engine** | Latency (p99) | **551.0 ns** | 99th percentile |
+| **C++ Matching Engine** | Latency (p99.9) | **3.59 µs** | Tail latency under bursts |
+| **REST API Layer** | Latency (p50) | **7.16 ms** | Includes HTTP framing, Express routing, PGlite lookup |
+| **REST API Layer** | Latency (avg) | **10.44 ms** | End-to-end loopback request response |
+| **Sanitizers** | ASan & UBSan | **0 errors / 0 leaks** | AddressSanitizer and UndefinedBehaviorSanitizer clean |
+| **Sanitizers** | ThreadSanitizer | **0 data races** | Lock-free SPSC concurrency verified |
+
+*Detailed benchmark methodology, hardware specs, and reproducibility notes are documented in [docs/PERFORMANCE_REPORT.md](docs/PERFORMANCE_REPORT.md).*
+
+---
+
+## 6. Quick Start & Local Setup
 
 ### Prerequisites
-- Node.js 18+ (tested on Node v20/v26)
-- Optional: C++ compiler supporting C++20 (GCC 13+ or Clang) for compiling the C++ matching engine benchmarks
+- Node.js 20+ (tested on v20 and v26)
+- Optional: GCC 13+ with C++20 support (for building the standalone C++ matching engine)
 
-### Single-Command Start:
+### Single-Command Run
 ```bash
-# 1. Install dependencies
+# 1. Clone repository
+git clone https://github.com/PrasannaMarihalkar/meridian-trading-surveillance.git
+cd meridian-trading-surveillance
+
+# 2. Install dependencies
 npm install
 
-# 2. Initialize and seed database (embedded zero-config PostgreSQL engine included)
+# 3. Initialize and seed database (embedded zero-config PostgreSQL engine included)
 npm run db:init
 
-# 3. Build frontend bundle
+# 4. Build frontend bundle
 npm run build:frontend
 
-# 4. Start full-stack platform
+# 5. Start the full-stack server
 npm start
 ```
-Open your browser to: **`http://localhost:4000`**
+Open **`http://localhost:4000`** in your browser.
 
-### Pre-Configured Demo Credentials:
+### Pre-Configured Demo Personas
 - **Trader:** `prasanna_trader` / `Password123!`
 - **Analyst:** `asha_analyst` / `Password123!`
 - **Admin:** `sys_admin` / `Password123!`
 
 ---
 
-## 5. Automated Verification & Testing
-
-MERIDIAN includes test suites across all layers:
+## 7. Verification & Testing
 
 ```bash
-# 1. Run Backend Integration Test Suite (9 critical workflows)
+# 1. Run Backend Integration Test Suite (9/9 passed)
 npm test
 
-# 2. Run all 17 Official College Demonstration Queries
+# 2. Run C++ Stdio IPC Bridge Test (3/3 passed)
+npx tsx tests/cpp_bridge.test.ts
+
+# 3. Verify Database Schema, Atomicity & Rollbacks on Disposable Instance
+npx tsx scripts/verify_disposable_db.ts
+
+# 4. Execute All 17 Official College Demonstration SQL Queries
 npm run demo:queries
 
-# 3. Build & Run C++ Systems Test Harness (WSL / Linux)
-cd engine && g++ -std=c++20 -O3 -pthread src/order_book.cpp tests/test_order_book.cpp -o test_order_book && ./test_order_book
+# 5. Compile and Run Standalone C++ Matching Engine Tests (Linux / WSL)
+g++ -std=c++20 -O3 -pthread -Iengine/include engine/src/order_book.cpp engine/tests/test_order_book.cpp -o test_ob && ./test_ob
 
-# 4. Run C++ Nanosecond Benchmark (100,000 orders)
-cd engine && g++ -std=c++20 -O3 -Wno-interference-size -pthread src/order_book.cpp benchmarks/benchmark_engine.cpp -o benchmark_engine && ./benchmark_engine
+# 6. Run C++ High-Throughput Benchmark (100,000 orders)
+g++ -std=c++20 -O3 -pthread -Iengine/include engine/src/order_book.cpp engine/benchmarks/benchmark_engine.cpp -o bench_ob && ./bench_ob
 ```
 
-### Verified Benchmark Results:
-- **Throughput:** **4,147,530 orders/second**
-- **Median Latency (p50):** **153 nanoseconds**
-- **99th Percentile Latency (p99):** **447 nanoseconds**
+---
+
+## 8. College DBMS Level 3 Deliverables
+
+This repository fulfills all course requirements for **DBMS Experiential Learning (Level 3)** at PES University under **Dr. Nagasundari S**:
+- **7-Page Peter Chen Notation ER Model:** [docs/ER_DIAGRAM.md](docs/ER_DIAGRAM.md) and [docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf](docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf).
+- **Formal Relational Schema & BCNF Proofs:** [docs/RELATIONAL_SCHEMA.md](docs/RELATIONAL_SCHEMA.md).
+- **Comprehensive Data Dictionary (17 Tables):** [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md).
+- **17 Demonstration Queries with Business Context:** [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md).
+- **Requirement Traceability Matrix:** [docs/FEATURE_TRACEABILITY.md](docs/FEATURE_TRACEABILITY.md).
+- **Technical Viva Preparation Guide:** [docs/VIVA_PREPARATION.md](docs/VIVA_PREPARATION.md).
 
 ---
 
-## 6. Official Documentation & Technical Audits Index
+## 9. Technical Documentation Index
 
-All architectural, college submission, and release audit materials are thoroughly documented:
-
-### Phase 10 Release & Engineering Reports:
-- [RELEASE_NOTES.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/RELEASE_NOTES.md): v1.0.0 official production release notes.
-- [FINAL_RELEASE_AUDIT.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/FINAL_RELEASE_AUDIT.md): Independent verification matrix and acceptance gates.
-- [FEATURE_TRACEABILITY.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/FEATURE_TRACEABILITY.md): 20/20 college requirement traceability matrix.
-- [PERFORMANCE_REPORT.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/PERFORMANCE_REPORT.md): Reproducible C++ and REST API latency benchmarks.
-- [OPERATIONS_RUNBOOK.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/OPERATIONS_RUNBOOK.md): Day-to-day operations and disaster recovery runbook.
-- [PRODUCTION_DEPLOYMENT.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/PRODUCTION_DEPLOYMENT.md): Cloud hosting comparison (Railway, Render, Fly.io).
-- [CI_CD.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/CI_CD.md): GitHub Actions continuous integration pipeline guide.
-- [KNOWN_LIMITATIONS.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/KNOWN_LIMITATIONS.md): Transparent engineering trade-offs and disclosures.
-- [DATABASE_PRODUCTION_REVIEW.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/DATABASE_PRODUCTION_REVIEW.md): Database constraint, trigger, and index audit.
-- [FRONTEND_RELEASE_REVIEW.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/FRONTEND_RELEASE_REVIEW.md): Multi-device responsive review and accessibility audit.
-- [SECURITY_RELEASE_REVIEW.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/SECURITY_RELEASE_REVIEW.md): Comprehensive security posture and risk assessment.
-- [CPP_ENGINE_REVIEW.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/CPP_ENGINE_REVIEW.md): Systems-level review of memory, concurrency, and order books.
-
-### Academic Architecture & DBMS Specifications:
-- [ER_DIAGRAM.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/ER_DIAGRAM.md): Peter Chen notation specification across 7 pages.
-- [RELATIONAL_SCHEMA.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/RELATIONAL_SCHEMA.md): Formal relational schema and BCNF normalization proofs.
-- [DATA_DICTIONARY.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/DATA_DICTIONARY.md): Column-level dictionary for all 17 tables.
-- [ARCHITECTURE.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/ARCHITECTURE.md): Subsystems, matching engine, and persistence details.
-- [VIVA_PREPARATION.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/VIVA_PREPARATION.md): In-depth technical viva Q&A guide.
-- [DEMO_GUIDE.md](file:///C:/Users/prasa/.gemini/antigravity/scratch/meridian/docs/DEMO_GUIDE.md): 5-minute live college viva presentation script.
+- [RELEASE_NOTES.md](docs/RELEASE_NOTES.md): v1.0.0 production release notes.
+- [FINAL_RELEASE_AUDIT.md](docs/FINAL_RELEASE_AUDIT.md): Master release verification report.
+- [DATABASE_PRODUCTION_REVIEW.md](docs/DATABASE_PRODUCTION_REVIEW.md): Database constraint, trigger, and index hardening audit.
+- [CPP_ENGINE_REVIEW.md](docs/CPP_ENGINE_REVIEW.md): Systems-level review of memory, concurrency, and order books.
+- [SECURITY_RELEASE_REVIEW.md](docs/SECURITY_RELEASE_REVIEW.md): Security posture, RBAC, and risk assessments.
+- [FRONTEND_RELEASE_REVIEW.md](docs/FRONTEND_RELEASE_REVIEW.md): Multi-viewport UI/UX review.
+- [PERFORMANCE_REPORT.md](docs/PERFORMANCE_REPORT.md): Reproducible C++ and REST API latency benchmarks.
+- [OPERATIONS_RUNBOOK.md](docs/OPERATIONS_RUNBOOK.md): System management and troubleshooting runbook.
+- [PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md): Cloud hosting comparison (Railway, Render, Fly.io).
+- [CI_CD.md](docs/CI_CD.md): GitHub Actions continuous integration guide.
+- [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md): Transparent engineering disclosures and trade-offs.
 
 ---
 
-## 7. License & Academic Attribution
-Developed for the Department of Computer Science and Engineering, PES University, Bengaluru.  
-Course: DBMS Experiential Learning (Level 3).  
-Licensed under the MIT License.
+## 10. License & Academic Attribution
+
+Developed by **Prasanna Marihalkar** (`PES1UG24CS684`), Department of Computer Science and Engineering, PES University, Bengaluru.  
+Course Instructor: **Dr. Nagasundari S**  
+Licensed under the [MIT License](LICENSE).
