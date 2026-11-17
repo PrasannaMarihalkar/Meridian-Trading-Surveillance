@@ -73,7 +73,7 @@ app.use((req: Request, res: Response) => {
 });
 
 // Global Error Handler
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error('[SERVER_ERROR]', err);
   res.status(500).json({
     error: 'Internal Server Error',

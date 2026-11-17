@@ -4,6 +4,10 @@ import { authenticate, AuthenticatedRequest } from '../middleware/auth';
 
 const router = Router();
 
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 // Trade Blotter
 router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -11,10 +15,10 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
     const { instrumentId, limit = '50' } = req.query;
 
     let query = 'SELECT * FROM v_trade_blotter WHERE 1=1';
-    const params: any[] = [];
+    const params: (string | number)[] = [];
     let idx = 1;
 
-    if (req.user?.role === 'TRADER') {
+    if (req.user?.role === 'TRADER' && req.user.accountId !== undefined) {
       query += ` AND (buyer_account_id = $${idx} OR seller_account_id = $${idx})`;
       params.push(req.user.accountId);
       idx++;
@@ -30,8 +34,8 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
 
     const result = await db.query(query, params);
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -47,10 +51,10 @@ router.get('/fills', authenticate, async (req: AuthenticatedRequest, res: Respon
       JOIN instruments i ON i.instrument_id = f.instrument_id
       WHERE 1=1
     `;
-    const params: any[] = [];
+    const params: (string | number)[] = [];
     let idx = 1;
 
-    if (req.user?.role === 'TRADER') {
+    if (req.user?.role === 'TRADER' && req.user.accountId !== undefined) {
       query += ` AND f.account_id = $${idx++}`;
       params.push(req.user.accountId);
     }
@@ -58,8 +62,8 @@ router.get('/fills', authenticate, async (req: AuthenticatedRequest, res: Respon
     query += ` ORDER BY f.executed_at DESC LIMIT 100`;
     const result = await db.query(query, params);
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 

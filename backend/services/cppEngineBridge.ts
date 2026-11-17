@@ -39,6 +39,7 @@ export class CppEngineBridge {
   private process: ChildProcess | null = null;
   private ready: boolean = false;
   private requestQueue: Array<{
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolve: (data: any) => void;
     reject: (err: Error) => void;
     expectedType: string;
@@ -120,8 +121,9 @@ export class CppEngineBridge {
         this.ready = false;
         this.process = null;
       });
-    } catch (err: any) {
-      console.warn('[CPP_BRIDGE] Initialization error:', err.message);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('[CPP_BRIDGE] Initialization error:', message);
       this.ready = false;
     }
   }

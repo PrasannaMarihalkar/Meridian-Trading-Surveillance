@@ -171,6 +171,6 @@ export interface AuditLogEntry {
   action: string;
   entity_type: string;
   entity_id: string;
-  old_data: any;
-  new_data: any;
+  old_data: Record<string, unknown> | null;
+  new_data: Record<string, unknown> | null;
 }

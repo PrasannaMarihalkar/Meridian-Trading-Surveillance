@@ -3,7 +3,7 @@ import { Server as HttpServer } from 'http';
 
 export interface MarketBroadcastPayload {
   type: 'BOOK_UPDATE' | 'TRADE_TICK' | 'SURVEILLANCE_ALERT';
-  data: any;
+  data: unknown;
   timestamp: string;
 }
 
@@ -31,7 +31,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
         if (parsed.type === 'PING') {
           ws.send(JSON.stringify({ type: 'PONG', timestamp: new Date().toISOString() }));
         }
-      } catch (e) {
+      } catch {
         // ignore non-json
       }
     });

@@ -6,6 +6,10 @@ import { z } from 'zod';
 
 const router = Router();
 
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 const PlaceOrderSchema = z.object({
   accountId: z.number().int().positive(),
   instrumentId: z.number().int().positive(),
@@ -29,8 +33,8 @@ router.post('/', authenticate, async (req: AuthenticatedRequest, res: Response) 
 
     const result = await TradingService.submitOrder(validated as PlaceOrderInput);
     res.status(201).json(result);
-  } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Order submission failed' });
+  } catch (err) {
+    res.status(400).json({ error: getErrorMessage(err) || 'Order submission failed' });
   }
 });
 
@@ -48,11 +52,11 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
       JOIN instruments i ON i.instrument_id = o.instrument_id
       WHERE 1=1
     `;
-    const params: any[] = [];
+    const params: (string | number)[] = [];
     let idx = 1;
 
     // Role filtering: Traders only see own orders
-    if (req.user?.role === 'TRADER') {
+    if (req.user?.role === 'TRADER' && req.user.accountId !== undefined) {
       query += ` AND o.account_id = $${idx++}`;
       params.push(req.user.accountId);
     } else if (accountId) {
@@ -62,7 +66,7 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
 
     if (status) {
       query += ` AND o.status = $${idx++}`;
-      params.push(status);
+      params.push(status as string);
     }
 
     if (instrumentId) {
@@ -75,8 +79,8 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
 
     const result = await db.query(query, params);
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -100,8 +104,8 @@ router.post('/:id/cancel', authenticate, async (req: AuthenticatedRequest, res: 
 
     const cancelledOrder = await TradingService.cancelOrder(orderId, targetAccountId);
     res.json({ message: 'Order cancelled successfully', order: cancelledOrder });
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
+  } catch (err) {
+    res.status(400).json({ error: getErrorMessage(err) });
   }
 });
 

@@ -6,6 +6,10 @@ import path from 'path';
 
 const router = Router();
 
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 // Health Check
 router.get('/health', async (_req: Request, res: Response) => {
   try {
@@ -22,8 +26,8 @@ router.get('/health', async (_req: Request, res: Response) => {
       uptime_seconds: process.uptime(),
       memory_usage: process.memoryUsage()
     });
-  } catch (err: any) {
-    res.status(503).json({ status: 'UNHEALTHY', error: err.message });
+  } catch (err) {
+    res.status(503).json({ status: 'UNHEALTHY', error: getErrorMessage(err) });
   }
 });
 
@@ -39,12 +43,12 @@ router.get('/audit-log', authenticate, requireRole('ADMIN', 'ANALYST'), async (r
       LEFT JOIN users u ON u.user_id = al.actor_user_id
       WHERE 1=1
     `;
-    const params: any[] = [];
+    const params: (string | number)[] = [];
     let idx = 1;
 
     if (entityType) {
       query += ` AND al.entity_type = $${idx++}`;
-      params.push(entityType);
+      params.push(entityType as string);
     }
 
     query += ` ORDER BY al.occurred_at DESC LIMIT $${idx++}`;
@@ -52,8 +56,8 @@ router.get('/audit-log', authenticate, requireRole('ADMIN', 'ANALYST'), async (r
 
     const result = await db.query(query, params);
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -63,8 +67,8 @@ router.get('/engine-offsets', authenticate, requireRole('ADMIN'), async (_req: A
     const db = await getDatabase();
     const result = await db.query('SELECT * FROM engine_offsets ORDER BY consumer ASC');
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -100,8 +104,8 @@ router.get('/college-queries', authenticate, async (req: AuthenticatedRequest, r
       resultCount: execResult.rows.length,
       rows: execResult.rows
     });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 

@@ -113,7 +113,7 @@ export class AuthService {
     if (!isValid) {
       const failedCount = (user.failed_logins || 0) + 1;
       let lockClause = '';
-      const queryParams: any[] = [failedCount, user.user_id];
+      const queryParams: (number | string)[] = [failedCount, user.user_id];
 
       if (failedCount >= 5) {
         lockClause = `, locked_until = NOW() + INTERVAL '15 minutes'`;
@@ -164,7 +164,7 @@ export class AuthService {
     return { user: user as User, token, accountId };
   }
 
-  static async getProfile(userId: number): Promise<User & { account?: any }> {
+  static async getProfile(userId: number): Promise<User & { account?: Record<string, unknown> }> {
     const db = await getDatabase();
     const userRes = await db.query(
       `SELECT user_id, email, username, role, is_active, failed_logins, locked_until, last_login_at, created_at

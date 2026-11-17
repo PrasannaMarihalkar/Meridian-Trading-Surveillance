@@ -6,6 +6,10 @@ import { z } from 'zod';
 
 const router = Router();
 
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 // List Alerts (Analyst & Admin)
 router.get('/alerts', authenticate, requireRole('ANALYST', 'ADMIN'), async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -13,23 +17,23 @@ router.get('/alerts', authenticate, requireRole('ANALYST', 'ADMIN'), async (req:
     const { status, severity } = req.query;
 
     let query = 'SELECT * FROM v_surveillance_summary WHERE 1=1';
-    const params: any[] = [];
+    const params: (string | number)[] = [];
     let idx = 1;
 
     if (status) {
       query += ` AND status = $${idx++}`;
-      params.push(status);
+      params.push(status as string);
     }
     if (severity) {
       query += ` AND severity = $${idx++}`;
-      params.push(severity);
+      params.push(severity as string);
     }
 
     query += ' ORDER BY created_at DESC LIMIT 100';
     const result = await db.query(query, params);
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -58,8 +62,8 @@ router.get('/alerts/:id', authenticate, requireRole('ANALYST', 'ADMIN'), async (
       alert: alertRes.rows[0],
       notes: notesRes.rows
     });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -75,8 +79,8 @@ router.put('/alerts/:id/status', authenticate, requireRole('ANALYST', 'ADMIN'), 
 
     const updated = await SurveillanceService.updateAlertStatus(alertId, status);
     res.json(updated);
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
+  } catch (err) {
+    res.status(400).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -87,8 +91,8 @@ router.put('/alerts/:id/assign', authenticate, requireRole('ANALYST', 'ADMIN'), 
     const analystId = req.body.analystId || req.user?.userId;
     const updated = await SurveillanceService.assignAlert(alertId, analystId);
     res.json(updated);
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
+  } catch (err) {
+    res.status(400).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -104,8 +108,8 @@ router.post('/alerts/:id/notes', authenticate, requireRole('ANALYST', 'ADMIN'), 
 
     const note = await SurveillanceService.addNote(alertId, req.user!.userId, body.trim());
     res.status(201).json(note);
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
+  } catch (err) {
+    res.status(400).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -120,8 +124,8 @@ router.get('/notes/search', authenticate, requireRole('ANALYST', 'ADMIN'), async
 
     const results = await SurveillanceService.searchNotes(q.trim());
     res.json(results);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -131,8 +135,8 @@ router.get('/patterns', authenticate, async (_req: AuthenticatedRequest, res: Re
     const db = await getDatabase();
     const result = await db.query('SELECT * FROM surveillance_patterns ORDER BY pattern_id ASC');
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -149,8 +153,8 @@ router.get('/sessions', authenticate, requireRole('ANALYST', 'ADMIN'), async (_r
        ORDER BY ss.created_at DESC LIMIT 50`
     );
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -165,8 +169,8 @@ router.post('/evaluate', authenticate, requireRole('ANALYST', 'ADMIN'), async (r
     const { accountId, instrumentId } = EvaluateSchema.parse(req.body);
     const result = await SurveillanceService.evaluateSessionWindow({ accountId, instrumentId });
     res.status(201).json(result);
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
+  } catch (err) {
+    res.status(400).json({ error: getErrorMessage(err) });
   }
 });
 

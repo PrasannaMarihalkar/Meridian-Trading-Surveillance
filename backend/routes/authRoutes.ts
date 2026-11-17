@@ -5,6 +5,10 @@ import { z } from 'zod';
 
 const router = Router();
 
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 const RegisterSchema = z.object({
   email: z.string().email(),
   username: z.string().min(3).max(30),
@@ -22,8 +26,8 @@ router.post('/register', async (req, res: Response) => {
     const validated = RegisterSchema.parse(req.body);
     const result = await AuthService.register(validated);
     res.status(201).json(result);
-  } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Registration failed' });
+  } catch (err) {
+    res.status(400).json({ error: getErrorMessage(err) || 'Registration failed' });
   }
 });
 
@@ -39,8 +43,8 @@ router.post('/login', async (req, res: Response) => {
       userAgent
     });
     res.json(result);
-  } catch (err: any) {
-    res.status(401).json({ error: err.message || 'Login failed' });
+  } catch (err) {
+    res.status(401).json({ error: getErrorMessage(err) || 'Login failed' });
   }
 });
 
@@ -52,8 +56,8 @@ router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response)
     }
     const profile = await AuthService.getProfile(req.user.userId);
     res.json(profile);
-  } catch (err: any) {
-    res.status(404).json({ error: err.message || 'Profile not found' });
+  } catch (err) {
+    res.status(404).json({ error: getErrorMessage(err) || 'Profile not found' });
   }
 });
 

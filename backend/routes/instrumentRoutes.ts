@@ -4,14 +4,18 @@ import { TradingService } from '../services/tradingService';
 
 const router = Router();
 
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 // List all instruments with Top of Book
 router.get('/', async (_req: Request, res: Response) => {
   try {
     const db = await getDatabase();
     const result = await db.query('SELECT * FROM v_top_of_book ORDER BY instrument_id ASC');
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -26,8 +30,8 @@ router.get('/:id', async (req: Request, res: Response) => {
       return;
     }
     res.json(result.rows[0]);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -38,8 +42,8 @@ router.get('/:id/order-book', async (req: Request, res: Response) => {
     const depth = parseInt((req.query.depth as string) || '10', 10);
     const snapshot = await TradingService.getOrderBookSnapshot(id, depth);
     res.json(snapshot);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 

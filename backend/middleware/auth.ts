@@ -24,7 +24,7 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
     const decoded = jwt.verify(token, JWT_SECRET) as AuthTokenPayload;
     req.user = decoded;
     next();
-  } catch (err) {
+  } catch {
     res.status(401).json({ error: 'Unauthorized: Token expired or invalid' });
   }
 }

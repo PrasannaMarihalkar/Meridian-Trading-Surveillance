@@ -6,12 +6,16 @@ import { z } from 'zod';
 
 const router = Router();
 
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 // List Accounts
 router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const db = await getDatabase();
     let query = 'SELECT * FROM accounts';
-    const params: any[] = [];
+    const params: (string | number)[] = [];
 
     // If TRADER, restrict to own account
     if (req.user?.role === 'TRADER') {
@@ -21,8 +25,8 @@ router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) =
 
     const result = await db.query(query, params);
     res.json(result.rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -53,8 +57,8 @@ router.get('/:id', authenticate, async (req: AuthenticatedRequest, res: Response
     }
 
     res.json(result.rows[0]);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -88,8 +92,8 @@ router.put('/:id/risk-limits', authenticate, requireRole('ADMIN'), async (req: A
     );
 
     res.json(result.rows[0]);
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
+  } catch (err) {
+    res.status(400).json({ error: getErrorMessage(err) });
   }
 });
 
@@ -104,8 +108,8 @@ router.get('/:id/positions', authenticate, async (req: AuthenticatedRequest, res
 
     const portfolio = await TradingService.getPortfolio(accountId);
     res.json(portfolio);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) });
   }
 });
 
