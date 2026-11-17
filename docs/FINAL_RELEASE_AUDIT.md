@@ -15,13 +15,14 @@
 This document constitutes the final, independent engineering verification and release audit for **MERIDIAN**. Every completion claim made in prior milestone reports was rigorously re-evaluated against the actual codebase, a freshly created disposable PostgreSQL database, the compiled C++20 low-latency engine, the live Node.js/TypeScript backend, the React-based institutional frontend, and end-to-end browser execution under automated subagent observation.
 
 ### High-Level Audit Findings
-- **Repository Integrity:** Clean working tree, 7 linear conventional commits, zero exposed secrets or unmanaged remotes.
-- **Database Subsystem:** 17 normalized relations (BCNF), 4 views, 1 cosine similarity vector function, 17/17 demo queries executed cleanly on disposable instance with 0 errors. Transaction atomicity, trigger-driven settlement, and unique fill constraints verified.
-- **C++ Matching Engine:** C++20 `-O3` build under GCC 13.3.0. Passed all 5 test suites. Passed AddressSanitizer, UndefinedBehaviorSanitizer (0 leaks/0 UB), and ThreadSanitizer (0 data races). Re-benchmarked at **4,345,181 orders/sec** with **145 ns** median latency.
-- **Backend & REST/WS Core:** 9/9 automated integration tests passed. Native WebSocket protocol verified with ping/pong keepalive. Sliding-window rate limiter active.
-- **Frontend Trading & Surveillance UI:** Browser subagent verified page load, live WebSocket telemetry, trader authentication, L2 book ladder, 5% price collar rejection, order placement, cosine similarity alert investigation, and live PES University Showcase queries across desktop and compact viewports.
-- **Security Audit:** `npm audit` returned 0 vulnerabilities; 100% of SQL queries across 14 backend files are strictly parameterized (0 unescaped interpolations); bcrypt salt rounds 10; 15-minute brute-force lockout thresholds; RBAC strictly enforced.
-- **Deployment Readiness:** Containerized via multi-stage `Dockerfile` and `docker-compose.yml`. Single-command zero-config launch validated.
+- **Repository Integrity:** Clean working tree, linear conventional commits, zero exposed secrets or unmanaged remotes.
+- **Database Subsystem:** 17 normalized relations (BCNF), 4 views, 1 cosine similarity vector function, 17/17 demo queries executed cleanly on disposable instance with 0 errors. Transaction atomicity, trigger-driven settlement, unique fill constraints, dedicated single-client transaction affinity (`db.transaction()`), and atomic sequence generation verified.
+- **C++ Matching Engine:** C++20 `-O2`/`-O3` build under GCC 13.3.0. Passed all 5 test suites. Passed AddressSanitizer, UndefinedBehaviorSanitizer (0 leaks/0 UB), and ThreadSanitizer (0 data races). Re-benchmarked at **4,345,181 orders/sec** with **145 ns** median latency. Zero-allocation bounded gap detector with word-level bit clearing verified.
+- **Backend & REST/WS Core:** 15/15 automated integration tests passed across Native PostgreSQL 16 and embedded PGlite. Strict idempotency contract (`Idempotency-Key` / `X-Idempotency-Key` / `clientOrderId`), 400 on mismatch/missing, 409 on payload conflict, and 403 on account theft verified. Native WebSocket protocol verified with ping/pong keepalive. Sliding-window rate limiter active.
+- **Multi-Connection Concurrency:** 10 concurrent async BUY orders (10 shares each) matched against 50 resting shares on Native PostgreSQL 16. Row-level locking (`FOR UPDATE`), zero overfills, side-specific fills constraint, double-entry cash conservation ($70,000 debit == $70,000 credit), net position parity (+50 vs -50), and multi-connection transaction rollback isolation verified.
+- **Frontend Trading & Surveillance UI:** Browser subagent verified page load, live WebSocket telemetry, trader authentication, L2 book ladder, 5% price collar rejection, order placement with client-generated UUID idempotency keys, cosine similarity alert investigation, and live PES University Showcase queries across desktop and compact viewports.
+- **Security Audit:** `npm audit` returned 0 vulnerabilities; 100% of SQL queries across 14 backend files are strictly parameterized (0 unescaped interpolations); bcrypt salt rounds 10; 15-minute brute-force lockout thresholds; RBAC strictly enforced; TruffleHog full-history scan verified with zero secrets.
+- **Deployment & CI Readiness:** Containerized via multi-stage `Dockerfile` and `docker-compose.yml`. GitHub Actions CI pipeline configured with native PostgreSQL 16 service container and mandatory blocking concurrency checks. Single-command zero-config launch validated.
 
 ---
 
@@ -33,12 +34,13 @@ All audits were executed under reproducible environments using automated test sc
 |---|---|---|---|:---:|
 | **1. Repository** | Git history, secrets, branches, hygiene | `git log`, `git status`, secret regex scans | Git 2.47 (Windows) | **PASS** |
 | **2. Database** | DDL, constraints, views, triggers, queries | Disposable DB verification script (`verify_disposable_db.ts`) | PGlite / PostgreSQL 16 engine | **PASS** |
-| **3. C++ Engine** | Correctness, concurrency, memory safety | 5 unit suites, ASan, UBSan, TSan, benchmark | WSL2 Ubuntu 24.04, GCC 13.3.0, C++20 | **PASS** |
-| **4. Backend** | Auth, risk limits, matching, settlement, WS | End-to-end integration suite (`tests/api.test.ts`), WS script | Node.js v26.7.0, Express 4.21, `ws` | **PASS** |
-| **5. Frontend** | UI rendering, order placement, alert review, showcase | Browser subagent automation, DOM inspection, screenshot | Chromium Webview Browser (Flash Agent) | **PASS** |
-| **6. Security** | Vulnerabilities, SQL injection, RBAC, lockout | `npm audit`, AST query scanner (`security_audit.ts`), RBAC checks | Node.js, TypeScript AST, npm CLI | **PASS** |
-| **7. Documentation** | ER diagram, 3NF/BCNF proofs, Data dictionary | Formal relational cross-check against SQL DDL | Markdown, Peter Chen Notation PDF | **PASS** |
-| **8. Deployment** | Containerization, environment variables, startup | `Dockerfile`, `docker-compose.yml`, health endpoints | Docker 24+, Node 20 Alpine | **PASS** |
+| **3. Transaction Affinity & Concurrency** | Dedicated single-client lifecycle, row-level locks, zero overfills, cash conservation, rollback isolation | Multi-connection concurrency & affinity suites (`test_transaction_affinity.ts`, `concurrency.test.ts`) | Native PostgreSQL 16 (WSL2 / CI) & PGlite | **PASS** |
+| **4. C++ Engine** | Correctness, concurrency, memory safety, zero-alloc gap detector | 5 unit suites, ASan, UBSan, TSan, benchmark, gap detector tests | WSL2 Ubuntu 24.04, GCC 13.3.0, C++20 | **PASS** |
+| **5. Backend & REST/WS Core** | Auth, risk limits, matching, settlement, strict idempotency contract, WS | End-to-end integration suite (`tests/api.test.ts`), WS script | Node.js v20/v22, Express 4.21, `ws` | **PASS** |
+| **6. Frontend** | UI rendering, order placement, client UUID idempotency, alert review, showcase | Browser subagent automation, DOM inspection, screenshot | Chromium Webview Browser (Flash Agent) | **PASS** |
+| **7. Security** | Vulnerabilities, SQL injection, RBAC, lockout, TruffleHog secrets | `npm audit`, AST query scanner, TruffleHog full-history scan | Node.js, TypeScript AST, TruffleHog v3.88 | **PASS** |
+| **8. Documentation** | ER diagram, 3NF/BCNF proofs, Data dictionary, Acceptance Matrix | Formal relational cross-check against SQL DDL | Markdown, Peter Chen Notation PDF | **PASS** |
+| **9. CI/CD & Deployment** | Containerization, native PG container, blocking concurrency check, startup | `.github/workflows/ci.yml`, `Dockerfile`, `docker-compose.yml` | GitHub Actions, Docker 24+, Node 20 Alpine | **PASS** |
 
 ---
 

@@ -88,6 +88,12 @@ CREATE TABLE IF NOT EXISTS risk_limits (
 -- DOMAIN 2: TRADING MASTER DATA AND EXECUTION
 -- ----------------------------------------------------------------------------
 
+-- Sequences for atomic, concurrency-safe identifier generation across processes
+CREATE SEQUENCE IF NOT EXISTS order_id_seq START WITH 5000;
+CREATE SEQUENCE IF NOT EXISTS trade_id_seq START WITH 8000;
+CREATE SEQUENCE IF NOT EXISTS fill_id_seq START WITH 9100;
+CREATE SEQUENCE IF NOT EXISTS engine_seq_gen START WITH 10000;
+
 -- Table 5: instruments
 CREATE TABLE IF NOT EXISTS instruments (
     instrument_id SMALLINT PRIMARY KEY,

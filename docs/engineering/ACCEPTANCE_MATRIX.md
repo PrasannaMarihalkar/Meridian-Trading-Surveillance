@@ -40,7 +40,7 @@ This matrix maps every functional, architectural, academic, security, and perfor
 | **REQ-DBMS-07** | 4 Relational Views | **VERIFIED PASS** | `database/sql/02_views_triggers.sql:155-225` | - | None required. `v_top_of_book`, `v_portfolio_summary`, `v_trade_blotter`, `v_surveillance_summary`. | Query each view; verify returned columns, aggregations, and join accuracy. |
 | **REQ-DBMS-08** | Full-Text Search on Case Notes (tsvector) | **VERIFIED PASS** | `database/sql/01_schema.sql:185-195`, `02_views_triggers.sql:50-65` | - | GIN index on `notes_tsv`; auto-populated by trigger. | Run Q15; query keywords via `to_tsquery('english', 'spoofing & pattern')`. |
 | **REQ-DBMS-09** | 17 Official College Demonstration Queries | **VERIFIED PASS** | `database/sql/04_demo_queries.sql:1-250` | - | All 17 queries execute deterministically in `scripts/run_demo_queries.ts`. | Run `npm run demo:queries`; assert all 17 queries return valid rows with 0 errors. |
-| **REQ-DBMS-10** | Native PostgreSQL CI Verification | **PASS WITH LIMITATION** | `tests/api.test.ts:15-30` (uses PGlite WASM) | **P2** | Add native PostgreSQL 16 container service to CI workflow alongside PGlite. | CI runs tests against both native PostgreSQL 16 network socket and PGlite. |
+| **REQ-DBMS-10** | Native PostgreSQL CI Verification & Transaction Affinity | **VERIFIED PASS** | `database/db.ts:75-115`, `.github/workflows/ci.yml:125-185`, `tests/test_transaction_affinity.ts:1-110` | - | Resolved `pool.query()` pseudo-transaction connection leak. Dedicated `pg.PoolClient` transaction abstraction with guaranteed connection affinity. Added Native PostgreSQL 16 service container to GitHub Actions CI running mandatory blocking checks. | Verified on native PostgreSQL 16 (WSL & CI) and PGlite: clean commits, rollback isolation, and zero connection leaks under interleaved concurrent transactions. |
 | **REQ-CPP-01** | Price-Time Continuous Double Auction | **VERIFIED PASS** | `engine/src/order_book.cpp:20-160` | - | FIFO matching logic matches resting bids/asks correctly. | Verified via `test_order_book.cpp` and ASan/UBSan build in CI. |
 | **REQ-CPP-02** | Fixed-Point Integer Price Scaling | **VERIFIED PASS** | `engine/include/types.hpp:13-26` | - | Scale factor 10,000 maps floating prices to 64-bit signed integers. | Arithmetic verified; 0 floating-point rounding errors in matching. |
 | **REQ-CPP-03** | Immediate-or-Cancel (IOC) Order Lifecycle | **VERIFIED PASS** | `engine/src/order_book.cpp:103-125`, `engine/tests/test_order_book.cpp:78-125` | - | Remainder status correctly set to `OrderStatus::CANCELLED`. Pass-by-reference signature `process_order(Order&)` propagates status to caller. | Verified with 3 regression tests in `test_order_book.cpp` (unfilled, partially filled, fully filled) across standard and ASan builds. |
@@ -73,23 +73,43 @@ This matrix maps every functional, architectural, academic, security, and perfor
 
 ## 3. Prioritized Stage 2 Implementation Targets
 
-From the matrix above, the following actionable remediation targets are prioritized for **Stage 2**:
+---
 
-1. **Target 1 (P0): Client Idempotency & Correlated IPC Bridge (`REQ-INT-01`)**
-   - Implement client-supplied idempotency key contract (`clientOrderId` scoped to `account_id`) in `orderRoutes.ts` and `TradingService.ts`. Reject differing duplicate payloads with 409 Conflict; return original order and trades on legitimate retry.
-   - Refactor `CppEngineBridge` to correlate responses by `order_id` map instead of naive FIFO queues.
-   - Establish `DATABASE` as the sole production-authoritative matching mode for Stage 2.
-   - Defer authoritative `CPP` mode and `HYBRID` outbox streaming to future stages until durable command recovery and reconciliation harnesses are built.
-   - Strictly prohibit automatic cross-engine fallback.
-2. **Target 2 (P0): Fix C++ Immediate-or-Cancel (IOC) Status Defect (`REQ-CPP-03`)**
-   - Correctly set `order.status = OrderStatus::CANCELLED` for cancelled unfulfilled IOC balances in `engine/src/order_book.cpp`.
-   - Add explicit unit tests in `engine/tests/test_order_book.cpp`.
-3. **Target 3 (P1): Compile Standalone C++ Engine and Enforce IPC Bridge Tests in CI (`REQ-INT-02`, `REQ-INT-03`)**
-   - Compile `meridian_engine` in `.github/workflows/ci.yml`.
-   - Execute `tests/cpp_bridge.test.ts` against the live binary in CI, failing if assertions cannot be verified.
-4. **Target 4 (P2): Gap Detector Heap Allocation Hardening (`REQ-CPP-06`)**
-   - Refactor `engine/include/gap_detector.hpp` to replace unbounded `std::unordered_set` with a fixed-size sequence sliding window or bitmap ring buffer.
-5. **Target 5 (P2): Cross-Platform Process Spawning (`REQ-INT-04`)**
-   - Support native Windows binary execution in `backend/services/cppEngineBridge.ts` before falling back to WSL.
-6. **Target 6 (P3): Documentation Truthfulness Reconciliation (`REQ-CPP-04`)**
-   - Harmonize `README.md` and `docs/ARCHITECTURE.md` to accurately describe the standard library container architecture (`std::map` and `std::list`).
+## 3. Stage 3 Independent Audit Verification & Resolution Status
+
+All Stage 2 targets and Stage 3 independent audit findings have been empirically reproduced, resolved, hardened, and verified across both native PostgreSQL 16 and embedded PGlite:
+
+1. **Target 1 (P0): Client Idempotency & Correlated IPC Bridge (`REQ-INT-01`) — VERIFIED PASS**
+   - Implemented strict client-supplied idempotency key contract (`Idempotency-Key` / `X-Idempotency-Key` and `clientOrderId`) in `backend/routes/orderRoutes.ts` and `backend/services/tradingService.ts`.
+   - Rejects missing idempotency key (400 Bad Request), invalid UUID format (400 Bad Request), and mismatched header vs body (400 Bad Request).
+   - Rejects differing duplicate payloads with 409 Conflict; isolates keys by account (403 Forbidden); returns original order and trades on legitimate retry without double execution.
+   - Frontend `TradingTerminal.tsx` updated to generate client UUID and supply both in headers and body.
+   - Refactored `CppEngineBridge` to correlate responses by `order_id` map instead of naive FIFO queues.
+   - `DATABASE` established as the sole production-authoritative matching mode.
+
+2. **Target 2 (P0): Fix C++ Immediate-or-Cancel (IOC) Status Defect (`REQ-CPP-03`) — VERIFIED PASS**
+   - Correctly set `order.status = OrderStatus::CANCELLED` for unfulfilled IOC balances in `engine/src/order_book.cpp`.
+   - Verified with 3 regression test suites in `engine/tests/test_order_book.cpp` under GCC `-O2` and AddressSanitizer/UBSan.
+
+3. **Target 3 (P1): Compile Standalone C++ Engine and Enforce IPC Bridge Tests in CI (`REQ-INT-02`, `REQ-INT-03`) — VERIFIED PASS**
+   - Standalone `meridian_engine` compiled and smoke-tested in `.github/workflows/ci.yml`.
+   - `tests/cpp_bridge.test.ts` executes against the live C++ engine binary in CI.
+
+4. **Target 4 (P2): Gap Detector Bounded Zero-Allocation Hardening (`REQ-CPP-06`) — VERIFIED PASS**
+   - Refactored `engine/include/gap_detector.hpp` to completely eliminate heap allocations (`std::vector<Gap> gaps_` replaced with `std::array<Gap, kMaxTrackedGaps>` and `std::span<const Gap>`).
+   - Word-level sequence jump bit-clearing loop implemented, achieving sub-microsecond worst-case bounded complexity ($O(\min(\lceil \Delta / 64 \rceil, 1024))$).
+   - Added exhaustive tests in `engine/tests/test_order_book.cpp`: sequential, large jumps (50,000), full-window clears (>65,536), split gaps, duplicates, stale packets, and max capacity saturation (512 gaps). Verified under ASan/UBSan.
+
+5. **Target 5 (P0): PostgreSQL Transaction Connection Affinity (`REQ-DBMS-10`) — VERIFIED PASS**
+   - Eliminated `pool.query()` pseudo-transactions spanning arbitrary physical connections.
+   - Implemented `db.transaction()` dedicated `PoolClient` lifecycle with guaranteed connection affinity: BEGIN, statements, and COMMIT execute on the same client, with ROLLBACK and release in `finally`.
+   - Integrated atomic PostgreSQL sequences (`order_id_seq`, `trade_id_seq`, `fill_id_seq`, `engine_seq_gen`) to eliminate ID allocation collisions across concurrent processes.
+   - Added native PostgreSQL 16 container service to GitHub Actions CI workflow alongside PGlite.
+   - Verified on native PostgreSQL 16 (WSL & CI) with zero connection leaks and 100% rollback isolation.
+
+6. **Target 6 (P0): Multi-Connection Concurrency & Financial Parity (`REQ-TEST-04`) — VERIFIED PASS**
+   - 10 concurrent async BUY orders (10 shares each) matched against 50 resting shares on Native PostgreSQL 16.
+   - Verified row-level locking (`SELECT ... FOR UPDATE`), zero overfills (exactly 50 matched), side-specific fills constraint (1 BUY, 1 SELL per trade), double-entry cash balance conservation ($70,000 debited == $70,000 credited), and net position parity (+50 vs -50).
+   - Resolved native Postgres `BIGINT` string vs number comparison in order matching leaves calculation.
+   - Added Step 4: Multi-Connection Rollback Isolation and Non-Interference Verification.
+   - Integrated `npm run test:concurrency` as a mandatory blocking check in GitHub Actions CI.

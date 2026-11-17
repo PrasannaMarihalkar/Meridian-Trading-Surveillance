@@ -24,7 +24,31 @@ const PlaceOrderSchema = z.object({
 // Submit Order
 router.post('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const validated = PlaceOrderSchema.parse(req.body);
+    // 1. Strict Idempotency Key Validation
+    const headerKey = (req.headers['idempotency-key'] || req.headers['x-idempotency-key']) as string | undefined;
+    const bodyKey = typeof req.body?.clientOrderId === 'string' && req.body.clientOrderId.trim().length > 0
+      ? req.body.clientOrderId.trim()
+      : undefined;
+
+    // Check for mismatch between header and body
+    if (headerKey && bodyKey && headerKey !== bodyKey) {
+      res.status(400).json({ error: 'Idempotency key mismatch: header and body clientOrderId must match' });
+      return;
+    }
+
+    const idempotencyKey = headerKey || bodyKey;
+    if (!idempotencyKey) {
+      res.status(400).json({ error: 'Missing required idempotency key: provide clientOrderId in body or Idempotency-Key header' });
+      return;
+    }
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(idempotencyKey)) {
+      res.status(400).json({ error: 'Invalid idempotency key format: must be a valid UUID' });
+      return;
+    }
+
+    const validated = PlaceOrderSchema.parse({ ...req.body, clientOrderId: idempotencyKey });
 
     // Derive account identity securely from authenticated principal
     let targetAccountId = req.user?.accountId;
@@ -43,8 +67,6 @@ router.post('/', authenticate, async (req: AuthenticatedRequest, res: Response) 
       return;
     }
 
-    const clientOrderId = validated.clientOrderId || (req.headers['idempotency-key'] as string | undefined);
-
     const input: PlaceOrderInput = {
       accountId: targetAccountId,
       instrumentId: validated.instrumentId,
@@ -53,7 +75,7 @@ router.post('/', authenticate, async (req: AuthenticatedRequest, res: Response) 
       timeInForce: validated.timeInForce,
       price: validated.price,
       quantity: validated.quantity,
-      clientOrderId: clientOrderId
+      clientOrderId: idempotencyKey
     };
 
     const result = await TradingService.submitOrder(input);

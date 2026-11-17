@@ -144,15 +144,28 @@ export function TradingTerminal({ user }: { user: any }) {
     setOrderSuccess(null);
 
     try {
+      // Generate client-side UUID for idempotency across network retries
+      const clientOrderId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+
       const res = await apiRequest<any>('/orders', {
         method: 'POST',
+        headers: {
+          'Idempotency-Key': clientOrderId
+        },
         body: JSON.stringify({
           accountId: user.accountId,
           instrumentId: selectedInstId,
           side,
           orderType,
           price: parseFloat(price) || 0,
-          quantity: parseInt(quantity, 10)
+          quantity: parseInt(quantity, 10),
+          clientOrderId
         })
       });
 

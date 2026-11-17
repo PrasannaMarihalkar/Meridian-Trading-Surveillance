@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { getDatabase } from '../../database/db';
+import { getDatabase, IDatabase, ITransactionClient } from '../../database/db';
 import { Order, OrderSide, OrderType, TimeInForce, Trade } from '../types';
 import { broadcastMarketData } from '../websocket';
 
@@ -44,8 +44,8 @@ export class TradingService {
   /**
    * Pre-trade Risk Filter & Validation
    */
-  static async validateRiskLimits(params: PlaceOrderInput): Promise<void> {
-    const db = await getDatabase();
+  static async validateRiskLimits(params: PlaceOrderInput, executor?: IDatabase | ITransactionClient): Promise<void> {
+    const db = executor || await getDatabase();
 
     // 1. Verify Instrument
     const instRes = await db.query(
@@ -132,268 +132,296 @@ export class TradingService {
   }
 
   /**
-   * Submit and Match Order (Atomic Transaction with Row-Level Locking)
+   * Submit and Match Order (Atomic Transaction with Row-Level Locking and Guaranteed Connection Affinity)
    */
   static async submitOrder(input: PlaceOrderInput): Promise<{ order: Order; trades: Trade[] }> {
     return matchingMutex.runExclusive(async () => {
       const db = await getDatabase();
       const clientOrderId = input.clientOrderId || randomUUID();
 
-    // Idempotency check: verify if an order with this clientOrderId already exists
-    const existingRes = await db.query<Order>(
-      `SELECT * FROM orders WHERE client_order_id = $1`,
-      [clientOrderId]
-    );
-
-    if (existingRes.rows.length > 0) {
-      const existing = existingRes.rows[0];
-      // Verify account ownership
-      if (Number(existing.account_id) !== Number(input.accountId)) {
-        const err = new Error('Forbidden: clientOrderId belongs to another account');
-        (err as unknown as { statusCode: number }).statusCode = 403;
-        throw err;
-      }
-
-      // Verify payload parameters match
-      const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
-      const qtyMatches = Number(existing.quantity) === Number(input.quantity);
-      const sideMatches = existing.side === input.side;
-      const typeMatches = existing.order_type === input.orderType;
-      const instMatches = Number(existing.instrument_id) === Number(input.instrumentId);
-
-      if (!priceMatches || !qtyMatches || !sideMatches || !typeMatches || !instMatches) {
-        const err = new Error('Idempotency key reused with differing order parameters');
-        (err as unknown as { statusCode: number }).statusCode = 409;
-        throw err;
-      }
-
-      // Legitimate retry: return existing order and its executed trades
-      const existingTradesRes = await db.query<Trade>(
-        `SELECT * FROM trades WHERE buy_order_id = $1 OR sell_order_id = $1 ORDER BY trade_id ASC`,
-        [existing.order_id]
+      // Fast-path idempotency check: outside transaction to avoid connection holding
+      const existingRes = await db.query<Order>(
+        `SELECT * FROM orders WHERE client_order_id = $1`,
+        [clientOrderId]
       );
 
-      return { order: existing, trades: existingTradesRes.rows };
-    }
+      if (existingRes.rows.length > 0) {
+        const existing = existingRes.rows[0];
+        // Verify account ownership
+        if (Number(existing.account_id) !== Number(input.accountId)) {
+          const err = new Error('Forbidden: clientOrderId belongs to another account');
+          (err as unknown as { statusCode: number }).statusCode = 403;
+          throw err;
+        }
 
-    await this.validateRiskLimits(input);
+        // Verify payload parameters match
+        const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
+        const qtyMatches = Number(existing.quantity) === Number(input.quantity);
+        const sideMatches = existing.side === input.side;
+        const typeMatches = existing.order_type === input.orderType;
+        const instMatches = Number(existing.instrument_id) === Number(input.instrumentId);
 
-    await db.query('BEGIN');
+        if (!priceMatches || !qtyMatches || !sideMatches || !typeMatches || !instMatches) {
+          const err = new Error('Idempotency key reused with differing order parameters');
+          (err as unknown as { statusCode: number }).statusCode = 409;
+          throw err;
+        }
 
-    try {
-      // Generate Order ID
-      const oidRes = await db.query('SELECT COALESCE(MAX(order_id), 5000) + 1 AS next_id FROM orders');
-      const orderId = parseInt(oidRes.rows[0].next_id, 10);
-      const tif = input.timeInForce || (input.orderType === 'IOC' ? 'IOC' : 'DAY');
+        // Legitimate retry: return existing order and its executed trades
+        const existingTradesRes = await db.query<Trade>(
+          `SELECT * FROM trades WHERE buy_order_id = $1 OR sell_order_id = $1 ORDER BY trade_id ASC`,
+          [existing.order_id]
+        );
 
-      // Insert Order as OPEN
-      const orderRes = await db.query<Order>(
-        `INSERT INTO orders (
-           order_id, client_order_id, account_id, instrument_id, side, order_type, time_in_force,
-           price, quantity, filled_qty, status, submitted_at, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 'OPEN', NOW(), NOW())
-         RETURNING *`,
-        [
-          orderId,
-          clientOrderId,
-          input.accountId,
-          input.instrumentId,
-          input.side,
-          input.orderType,
-          tif,
-          input.price,
-          input.quantity
-        ]
-      );
+        return { order: existing, trades: existingTradesRes.rows };
+      }
 
-      let activeOrder = orderRes.rows[0];
+      let activeOrder: Order | null = null;
       const trades: Trade[] = [];
 
-      // Order Matching Engine Logic
-      // If incoming order is BUY, match against resting SELL orders (ordered by lowest price first, then oldest submitted_at)
-      // If incoming order is SELL, match against resting BUY orders (ordered by highest price first, then oldest submitted_at)
-      const oppositeSide: OrderSide = input.side === 'BUY' ? 'SELL' : 'BUY';
-      const priceCondition = input.orderType === 'MARKET' ? '' :
-        (input.side === 'BUY' ? 'AND price <= $3' : 'AND price >= $3');
-
-      const sortOrder = input.side === 'BUY' ? 'ASC' : 'DESC';
-
-      // Row-level lock (FOR UPDATE) prevents concurrent double-matching of leaves_qty
-      const candidateSql = `
-        SELECT order_id, account_id, price, quantity, filled_qty, (quantity - filled_qty) AS leaves_qty
-        FROM orders
-        WHERE instrument_id = $1 AND side = $2 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND account_id <> $4
-        ${priceCondition}
-        ORDER BY price ${sortOrder}, submitted_at ASC
-        FOR UPDATE
-      `;
-
-      const candidateParams = input.orderType === 'MARKET'
-        ? [input.instrumentId, oppositeSide, input.accountId]
-        : [input.instrumentId, oppositeSide, input.price, input.accountId];
-
-      const candidates = await db.query(candidateSql, candidateParams);
-
-      let remainingQty = activeOrder.quantity;
-
-      for (const resting of candidates.rows) {
-        if (remainingQty <= 0) break;
-
-        const restingLeaves = parseInt(resting.leaves_qty, 10);
-        const matchQty = Math.min(remainingQty, restingLeaves);
-        const matchPrice = parseFloat(resting.price); // Passive resting order price
-
-        // Generate Trade
-        const tidRes = await db.query('SELECT COALESCE(MAX(trade_id), 9000) + 1 AS next_tid FROM trades');
-        const seqRes = await db.query('SELECT COALESCE(MAX(engine_seq), 700000) + 1 AS next_seq FROM trades');
-        const nextTradeId = parseInt(tidRes.rows[0].next_tid, 10);
-        const nextSeq = parseInt(seqRes.rows[0].next_seq, 10);
-
-        const buyOrderId = input.side === 'BUY' ? activeOrder.order_id : resting.order_id;
-        const sellOrderId = input.side === 'SELL' ? activeOrder.order_id : resting.order_id;
-        const buyerAccountId = input.side === 'BUY' ? activeOrder.account_id : resting.account_id;
-        const sellerAccountId = input.side === 'SELL' ? activeOrder.account_id : resting.account_id;
-
-        const tradeRes = await db.query<Trade>(
-          `INSERT INTO trades (
-             trade_id, engine_seq, instrument_id, executed_at, price, quantity,
-             buy_order_id, sell_order_id, buyer_account_id, seller_account_id, aggressor_side
-           ) VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8, $9, $10)
-           RETURNING *`,
-          [
-            nextTradeId,
-            nextSeq,
-            input.instrumentId,
-            matchPrice,
-            matchQty,
-            buyOrderId,
-            sellOrderId,
-            buyerAccountId,
-            sellerAccountId,
-            input.side
-          ]
-        );
-        const trade = tradeRes.rows[0];
-        trades.push(trade);
-
-        // Generate Fills (1 Buyer Fill and 1 Seller Fill)
-        const fidRes = await db.query('SELECT COALESCE(MAX(fill_id), 9100) + 1 AS next_fid FROM fills');
-        const fillId1 = parseInt(fidRes.rows[0].next_fid, 10);
-        const fillId2 = fillId1 + 1;
-
-        // Buyer Fill
-        await db.query(
-          `INSERT INTO fills (fill_id, trade_id, order_id, account_id, instrument_id, side, price, quantity, cash_delta, realized_pnl, executed_at)
-           VALUES ($1, $2, $3, $4, $5, 'BUY', $6, $7, $8, 0, NOW())`,
-          [fillId1, trade.trade_id, buyOrderId, buyerAccountId, input.instrumentId, matchPrice, matchQty, -(matchPrice * matchQty)]
-        );
-
-        // Seller Fill
-        await db.query(
-          `INSERT INTO fills (fill_id, trade_id, order_id, account_id, instrument_id, side, price, quantity, cash_delta, realized_pnl, executed_at)
-           VALUES ($1, $2, $3, $4, $5, 'SELL', $6, $7, $8, 0, NOW())`,
-          [fillId2, trade.trade_id, sellOrderId, sellerAccountId, input.instrumentId, matchPrice, matchQty, (matchPrice * matchQty)]
-        );
-
-        // Update resting order
-        const newRestingFilled = parseInt(resting.filled_qty, 10) + matchQty;
-        const newRestingStatus = newRestingFilled >= parseInt(resting.quantity, 10) ? 'FILLED' : 'PARTIALLY_FILLED';
-        await db.query(
-          `UPDATE orders SET filled_qty = $1, status = $2, updated_at = NOW() WHERE order_id = $3`,
-          [newRestingFilled, newRestingStatus, resting.order_id]
-        );
-
-        remainingQty -= matchQty;
-      }
-
-      // Finalize incoming active order status
-      const totalFilled = activeOrder.quantity - remainingQty;
-      let finalStatus = activeOrder.status;
-
-      if (totalFilled === activeOrder.quantity) {
-        finalStatus = 'FILLED';
-      } else if (totalFilled > 0) {
-        finalStatus = (input.orderType === 'IOC' || input.orderType === 'MARKET') ? 'CANCELLED' : 'PARTIALLY_FILLED';
-      } else {
-        finalStatus = (input.orderType === 'IOC' || input.orderType === 'MARKET') ? 'CANCELLED' : 'OPEN';
-      }
-
-      const updatedActiveRes = await db.query<Order>(
-        `UPDATE orders SET filled_qty = $1, status = $2, updated_at = NOW() WHERE order_id = $3 RETURNING *`,
-        [totalFilled, finalStatus, activeOrder.order_id]
-      );
-
-      activeOrder = updatedActiveRes.rows[0];
-
-      await db.query('COMMIT');
-
-      // Asynchronous Real-Time Market Broadcasts
       try {
-        const snapshot = await this.getOrderBookSnapshot(input.instrumentId, 10);
-        broadcastMarketData({
-          type: 'BOOK_UPDATE',
-          data: { instrumentId: input.instrumentId, snapshot },
-          timestamp: new Date().toISOString()
-        });
+        await db.transaction(async (tx) => {
+          // Pre-trade risk validation inside the transaction boundary
+          await this.validateRiskLimits(input, tx);
 
-        for (const t of trades) {
-          broadcastMarketData({
-            type: 'TRADE_TICK',
-            data: t,
-            timestamp: new Date().toISOString()
-          });
-        }
-      } catch (wsErr) {
-        console.warn('[WS_BROADCAST] Market broadcast error:', wsErr);
-      }
+          // Atomic sequence allocation for Order ID
+          let orderId: number;
+          try {
+            const oidRes = await tx.query(`SELECT nextval('order_id_seq') AS next_id`);
+            orderId = parseInt(oidRes.rows[0].next_id, 10);
+          } catch {
+            const oidRes = await tx.query('SELECT COALESCE(MAX(order_id), 5000) + 1 AS next_id FROM orders');
+            orderId = parseInt(oidRes.rows[0].next_id, 10);
+          }
 
-      return { order: activeOrder, trades };
-    } catch (err: unknown) {
-      await db.query('ROLLBACK');
+          const tif = input.timeInForce || (input.orderType === 'IOC' ? 'IOC' : 'DAY');
 
-      // Check if duplicate client_order_id was inserted concurrently
-      if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === '23505') {
-        const concurrentRes = await db.query<Order>(
-          `SELECT * FROM orders WHERE client_order_id = $1`,
-          [clientOrderId]
-        );
-        if (concurrentRes.rows.length > 0) {
-          const existing = concurrentRes.rows[0];
-          const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
-          const qtyMatches = Number(existing.quantity) === Number(input.quantity);
-          const sideMatches = existing.side === input.side;
-          const typeMatches = existing.order_type === input.orderType;
-          const instMatches = Number(existing.instrument_id) === Number(input.instrumentId);
+          // Insert Order as OPEN
+          const orderRes = await tx.query<Order>(
+            `INSERT INTO orders (
+               order_id, client_order_id, account_id, instrument_id, side, order_type, time_in_force,
+               price, quantity, filled_qty, status, submitted_at, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 'OPEN', NOW(), NOW())
+             RETURNING *`,
+            [
+              orderId,
+              clientOrderId,
+              input.accountId,
+              input.instrumentId,
+              input.side,
+              input.orderType,
+              tif,
+              input.price,
+              input.quantity
+            ]
+          );
 
-          if (priceMatches && qtyMatches && sideMatches && typeMatches && instMatches) {
-            const concurrentTrades = await db.query<Trade>(
-              `SELECT * FROM trades WHERE buy_order_id = $1 OR sell_order_id = $1 ORDER BY trade_id ASC`,
-              [existing.order_id]
+          activeOrder = orderRes.rows[0];
+
+          // Order Matching Engine Logic
+          const oppositeSide: OrderSide = input.side === 'BUY' ? 'SELL' : 'BUY';
+          const priceCondition = input.orderType === 'MARKET' ? '' :
+            (input.side === 'BUY' ? 'AND price <= $3' : 'AND price >= $3');
+          const sortOrder = input.side === 'BUY' ? 'ASC' : 'DESC';
+
+          // Row-level lock (FOR UPDATE) prevents concurrent double-matching of leaves_qty
+          const candidateSql = `
+            SELECT order_id, account_id, price, quantity, filled_qty, (quantity - filled_qty) AS leaves_qty
+            FROM orders
+            WHERE instrument_id = $1 AND side = $2 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND account_id <> $4 AND (quantity - filled_qty) > 0
+            ${priceCondition}
+            ORDER BY price ${sortOrder}, submitted_at ASC
+            FOR UPDATE
+          `;
+
+          const candidateParams = input.orderType === 'MARKET'
+            ? [input.instrumentId, oppositeSide, input.accountId]
+            : [input.instrumentId, oppositeSide, input.price, input.accountId];
+
+          const candidates = await tx.query(candidateSql, candidateParams);
+
+          const activeTotalQty = parseInt(String(activeOrder.quantity), 10);
+          let remainingQty = activeTotalQty;
+
+          for (const resting of candidates.rows) {
+            if (remainingQty <= 0) break;
+
+            const restingLeaves = parseInt(String(resting.leaves_qty), 10);
+            if (restingLeaves <= 0) continue;
+
+            const matchQty = Math.min(remainingQty, restingLeaves);
+            if (matchQty <= 0) continue;
+
+            const matchPrice = parseFloat(String(resting.price)); // Passive resting order price
+
+            // Generate Trade with atomic sequences
+            let nextTradeId: number;
+            let nextSeq: number;
+            try {
+              const tidRes = await tx.query(`SELECT nextval('trade_id_seq') AS next_tid`);
+              const seqRes = await tx.query(`SELECT nextval('engine_seq_gen') AS next_seq`);
+              nextTradeId = parseInt(tidRes.rows[0].next_tid, 10);
+              nextSeq = parseInt(seqRes.rows[0].next_seq, 10);
+            } catch {
+              const tidRes = await tx.query('SELECT COALESCE(MAX(trade_id), 8000) + 1 AS next_tid FROM trades');
+              const seqRes = await tx.query('SELECT COALESCE(MAX(engine_seq), 10000) + 1 AS next_seq FROM trades');
+              nextTradeId = parseInt(tidRes.rows[0].next_tid, 10);
+              nextSeq = parseInt(seqRes.rows[0].next_seq, 10);
+            }
+
+            const buyOrderId = input.side === 'BUY' ? activeOrder.order_id : resting.order_id;
+            const sellOrderId = input.side === 'SELL' ? activeOrder.order_id : resting.order_id;
+            const buyerAccountId = input.side === 'BUY' ? activeOrder.account_id : resting.account_id;
+            const sellerAccountId = input.side === 'SELL' ? activeOrder.account_id : resting.account_id;
+
+            const tradeRes = await tx.query<Trade>(
+              `INSERT INTO trades (
+                 trade_id, engine_seq, instrument_id, executed_at, price, quantity,
+                 buy_order_id, sell_order_id, buyer_account_id, seller_account_id, aggressor_side
+               ) VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8, $9, $10)
+               RETURNING *`,
+              [
+                nextTradeId,
+                nextSeq,
+                input.instrumentId,
+                matchPrice,
+                matchQty,
+                buyOrderId,
+                sellOrderId,
+                buyerAccountId,
+                sellerAccountId,
+                input.side
+              ]
             );
-            return { order: existing, trades: concurrentTrades.rows };
+            const trade = tradeRes.rows[0];
+            trades.push(trade);
+
+            // Generate Fills with atomic sequences (1 Buyer Fill and 1 Seller Fill)
+            let fillId1: number;
+            let fillId2: number;
+            try {
+              const fidRes1 = await tx.query(`SELECT nextval('fill_id_seq') AS next_fid`);
+              const fidRes2 = await tx.query(`SELECT nextval('fill_id_seq') AS next_fid`);
+              fillId1 = parseInt(fidRes1.rows[0].next_fid, 10);
+              fillId2 = parseInt(fidRes2.rows[0].next_fid, 10);
+            } catch {
+              const fidRes = await tx.query('SELECT COALESCE(MAX(fill_id), 9100) + 1 AS next_fid FROM fills');
+              fillId1 = parseInt(fidRes.rows[0].next_fid, 10);
+              fillId2 = fillId1 + 1;
+            }
+
+            // Buyer Fill
+            await tx.query(
+              `INSERT INTO fills (fill_id, trade_id, order_id, account_id, instrument_id, side, price, quantity, cash_delta, realized_pnl, executed_at)
+               VALUES ($1, $2, $3, $4, $5, 'BUY', $6, $7, $8, 0, NOW())`,
+              [fillId1, trade.trade_id, buyOrderId, buyerAccountId, input.instrumentId, matchPrice, matchQty, -(matchPrice * matchQty)]
+            );
+
+            // Seller Fill
+            await tx.query(
+              `INSERT INTO fills (fill_id, trade_id, order_id, account_id, instrument_id, side, price, quantity, cash_delta, realized_pnl, executed_at)
+               VALUES ($1, $2, $3, $4, $5, 'SELL', $6, $7, $8, 0, NOW())`,
+              [fillId2, trade.trade_id, sellOrderId, sellerAccountId, input.instrumentId, matchPrice, matchQty, (matchPrice * matchQty)]
+            );
+
+            // Update resting order
+            const restingQty = parseInt(String(resting.quantity), 10);
+            const newRestingFilled = parseInt(String(resting.filled_qty), 10) + matchQty;
+            const newRestingStatus = newRestingFilled >= restingQty ? 'FILLED' : 'PARTIALLY_FILLED';
+            await tx.query(
+              `UPDATE orders SET filled_qty = $1, status = $2, updated_at = NOW() WHERE order_id = $3`,
+              [newRestingFilled, newRestingStatus, resting.order_id]
+            );
+
+            remainingQty -= matchQty;
+          }
+
+          // Finalize incoming active order status
+          const totalFilled = activeTotalQty - remainingQty;
+          let finalStatus = activeOrder.status;
+
+          if (totalFilled === activeTotalQty) {
+            finalStatus = 'FILLED';
+          } else if (totalFilled > 0) {
+            finalStatus = (input.orderType === 'IOC' || input.orderType === 'MARKET') ? 'CANCELLED' : 'PARTIALLY_FILLED';
           } else {
-            const conflictErr = new Error('Idempotency key reused with differing order parameters');
-            (conflictErr as unknown as { statusCode: number }).statusCode = 409;
-            throw conflictErr;
+            finalStatus = (input.orderType === 'IOC' || input.orderType === 'MARKET') ? 'CANCELLED' : 'OPEN';
+          }
+
+          const updatedActiveRes = await tx.query<Order>(
+            `UPDATE orders SET filled_qty = $1, status = $2, updated_at = NOW() WHERE order_id = $3 RETURNING *`,
+            [totalFilled, finalStatus, activeOrder.order_id]
+          );
+
+          activeOrder = updatedActiveRes.rows[0];
+        });
+      } catch (err: unknown) {
+        // Check if duplicate client_order_id was inserted concurrently
+        if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === '23505') {
+          const concurrentRes = await db.query<Order>(
+            `SELECT * FROM orders WHERE client_order_id = $1`,
+            [clientOrderId]
+          );
+          if (concurrentRes.rows.length > 0) {
+            const existing = concurrentRes.rows[0];
+            const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
+            const qtyMatches = Number(existing.quantity) === Number(input.quantity);
+            const sideMatches = existing.side === input.side;
+            const typeMatches = existing.order_type === input.orderType;
+            const instMatches = Number(existing.instrument_id) === Number(input.instrumentId);
+
+            if (priceMatches && qtyMatches && sideMatches && typeMatches && instMatches) {
+              const concurrentTrades = await db.query<Trade>(
+                `SELECT * FROM trades WHERE buy_order_id = $1 OR sell_order_id = $1 ORDER BY trade_id ASC`,
+                [existing.order_id]
+              );
+              return { order: existing, trades: concurrentTrades.rows };
+            } else {
+              const conflictErr = new Error('Idempotency key reused with differing order parameters');
+              (conflictErr as unknown as { statusCode: number }).statusCode = 409;
+              throw conflictErr;
+            }
           }
         }
+        throw err;
       }
 
-      throw err;
-    }
+      // Asynchronous Real-Time Market Broadcasts (after commit)
+      if (activeOrder) {
+        try {
+          const snapshot = await this.getOrderBookSnapshot(input.instrumentId, 10);
+          broadcastMarketData({
+            type: 'BOOK_UPDATE',
+            data: { instrumentId: input.instrumentId, snapshot },
+            timestamp: new Date().toISOString()
+          });
+
+          for (const t of trades) {
+            broadcastMarketData({
+              type: 'TRADE_TICK',
+              data: t,
+              timestamp: new Date().toISOString()
+            });
+          }
+        } catch (wsErr) {
+          console.warn('[WS_BROADCAST] Market broadcast error:', wsErr);
+        }
+      }
+
+      return { order: activeOrder!, trades };
     });
   }
 
   /**
-   * Cancel Order (Atomic Transaction)
+   * Cancel Order (Atomic Transaction with Guaranteed Connection Affinity)
    */
   static async cancelOrder(orderId: number, accountId: number): Promise<Order> {
     return matchingMutex.runExclusive(async () => {
       const db = await getDatabase();
-      await db.query('BEGIN');
+      let cancelledOrder: Order | null = null;
 
-      try {
-        const orderRes = await db.query<Order>(
+      await db.transaction(async (tx) => {
+        const orderRes = await tx.query<Order>(
           `SELECT * FROM orders WHERE order_id = $1 AND account_id = $2 FOR UPDATE`,
           [orderId, accountId]
         );
@@ -407,31 +435,30 @@ export class TradingService {
           throw new Error(`Order ${orderId} cannot be cancelled in state ${order.status}`);
         }
 
-        const updated = await db.query<Order>(
+        const updated = await tx.query<Order>(
           `UPDATE orders SET status = 'CANCELLED', cancel_requested_at = NOW(), updated_at = NOW()
            WHERE order_id = $1 RETURNING *`,
           [orderId]
         );
 
-        await db.query('COMMIT');
+        cancelledOrder = updated.rows[0];
+      });
 
-        // Real-time Order Book depth update after cancellation
+      // Real-time Order Book depth update after cancellation (after commit)
+      if (cancelledOrder) {
         try {
-          const snapshot = await this.getOrderBookSnapshot(order.instrument_id, 10);
+          const snapshot = await this.getOrderBookSnapshot((cancelledOrder as Order).instrument_id, 10);
           broadcastMarketData({
             type: 'BOOK_UPDATE',
-            data: { instrumentId: order.instrument_id, snapshot },
+            data: { instrumentId: (cancelledOrder as Order).instrument_id, snapshot },
             timestamp: new Date().toISOString()
           });
         } catch (wsErr) {
           console.warn('[WS_BROADCAST] Cancel market broadcast error:', wsErr);
         }
-
-        return updated.rows[0];
-      } catch (err) {
-        await db.query('ROLLBACK');
-        throw err;
       }
+
+      return cancelledOrder!;
     });
   }
 

@@ -98,3 +98,27 @@
      - Eliminated all false claims of intrusive memory pools and zero dynamic allocation on order book fast path; accurately documented `std::map<Price, std::list<Order>>`.
      - Explicitly documented PostgreSQL `DATABASE` mode as the sole production-authoritative matching engine.
 
+---
+
+### Entry 004: Stage 3 Independent Audit Findings, Hardening & Verification
+- **Date:** November 17, 2026
+- **Status:** **ALL FINDINGS RESOLVED & EMPIRICALLY VERIFIED**
+- **Auditor:** Principal Systems Architect & Independent Security/Database Specialist
+- **Findings & Verified Outcomes:**
+  1. **PostgreSQL Transaction Connection Affinity Defect Elimination (`REQ-DBMS-10`):**
+     - **Confirmed Defect:** In commit `788434f`, `database/db.ts` and `TradingService.submitOrder()` used `pool.query()` for `BEGIN`, transaction statements, and `COMMIT`. Because `node-postgres` acquires an idle connection per `pool.query()`, statements executed across differing physical connections, causing uncommitted transaction leaks and failed rollbacks.
+     - **Resolution:** Implemented `ITransactionClient` and `db.transaction<T>(fn)` in `database/db.ts`. Native `pg.Pool` acquires a dedicated `pg.PoolClient`, executes `BEGIN`, statements, and `COMMIT` on that exact connection, catches errors and runs `ROLLBACK`, and guarantees `client.release()` in a `finally` block.
+     - **Verification:** Created `tests/test_transaction_affinity.ts`. Verified on Native PostgreSQL 16 (WSL) and PGlite: 5 concurrent interleaved transactions (odd fail, even succeed) resulted in exactly 0 leaked rows, clean rollbacks on failing connections, and 0 leaked connections in the pool.
+  2. **Bounded Zero-Allocation UDP Packet Gap Detector (`REQ-CPP-06`):**
+     - **Confirmed Defect:** `std::vector<Gap> gaps_` in `engine/include/gap_detector.hpp` dynamically allocated heap memory on packet arrival (`push_back`, `insert`, `erase`), violating zero-allocation claims. Furthermore, forward jump bit clearing used a linear loop over sequence numbers.
+     - **Resolution:** Replaced `std::vector<Gap>` with pre-allocated inline `std::array<Gap, kMaxTrackedGaps>` (`kMaxTrackedGaps = 512`) and zero-allocation C++20 `std::span<const Gap> gaps()`. Replaced sequence loop with word-level batch bit clearing (`clear_index_range`), achieving $O(\min(\lceil \Delta / 64 \rceil, 1024))$ bounded clearing time. Contiguous memory footprint: exactly 20,560 bytes.
+     - **Verification:** Expanded `engine/tests/test_order_book.cpp` with exhaustive tests covering large jumps (50,000 packets), full-window clears (>65,536), out-of-order gap splits and head/tail resolution, duplicates, stale packets, and max gap table saturation (512 gaps). Verified clean under GCC `-O2` and AddressSanitizer/UBSan.
+  3. **Idempotency Enforcement & API Contract Hardening (`REQ-INT-01`):**
+     - **Confirmed Defect:** Frontend `TradingTerminal.tsx` was not supplying `clientOrderId` or idempotency headers, leaving network retries vulnerable to duplicate execution.
+     - **Resolution:** Implemented strict idempotency validation in `backend/routes/orderRoutes.ts`: accepts `Idempotency-Key` or `X-Idempotency-Key` headers or body `clientOrderId`, validates UUID format, enforces header/body equality (400 Bad Request on mismatch), rejects missing keys (400 Bad Request), rejects differing payloads (409 Conflict), and enforces account isolation (403 Forbidden). Added `Idempotency-Key` and `X-Idempotency-Key` to CORS `allowedHeaders` in `backend/server.ts`. Updated `TradingTerminal.tsx` to generate client-side UUID and send in both headers and body.
+     - **Verification:** Added Tests 12-15 to `tests/api.test.ts`. Verified 15/15 integration tests passing on Native PostgreSQL 16 and PGlite.
+  4. **Multi-Connection Concurrency & CI PostgreSQL Service Container (`REQ-TEST-04`):**
+     - **Native PG Bug Caught:** In native PostgreSQL (`pg`), `orders.quantity` (`BIGINT`) is returned as a string (`'50'`). Strict equality `totalFilled === activeOrder.quantity` (`50 === '50'`) failed, falsely marking fully filled orders as `PARTIALLY_FILLED`, allowing a subsequent match to attempt a 0-quantity trade and violating `trades_quantity_check`. Fixed by parsing quantities with `parseInt(String(...), 10)` and adding `AND (quantity - filled_qty) > 0` to matching candidate selection.
+     - **Rollback Isolation Test:** Added Step 4 to `tests/concurrency.test.ts`: verified that Connection A's forced rollback rolled back 100% of writes (0 residual rows, cash intact) without interfering with concurrent Connection B's commit.
+     - **CI Pipeline Hardening:** Updated `.github/workflows/ci.yml` with a native `postgres:16` service container, running `init_db.ts`, `test_transaction_affinity.ts`, `api.test.ts`, and `concurrency.test.ts` against Native PostgreSQL 16 as a mandatory blocking check, followed by embedded PGlite verification.
+

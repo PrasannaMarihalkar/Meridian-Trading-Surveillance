@@ -22,6 +22,14 @@ async function main() {
     console.log(`[SQL] Successfully executed ${file}`);
   }
 
+  // Synchronize sequences with existing seed data to prevent ID collision
+  console.log('[SEQUENCES] Synchronizing atomic primary key sequences...');
+  await db.query(`SELECT setval('order_id_seq', GREATEST(5000, COALESCE((SELECT MAX(order_id) FROM orders), 5000)))`);
+  await db.query(`SELECT setval('trade_id_seq', GREATEST(8000, COALESCE((SELECT MAX(trade_id) FROM trades), 8000)))`);
+  await db.query(`SELECT setval('fill_id_seq', GREATEST(9100, COALESCE((SELECT MAX(fill_id) FROM fills), 9100)))`);
+  await db.query(`SELECT setval('engine_seq_gen', GREATEST(10000, COALESCE((SELECT MAX(engine_seq) FROM trades), 10000)))`);
+  console.log('[SEQUENCES] Sequences synchronized successfully.');
+
   console.log('\n[VERIFICATION] Verifying row counts across all 17 entities:\n');
 
   const checkSql = `

@@ -177,6 +177,68 @@ async function runConcurrencyStressTest() {
   }
   console.log('  ✓ Net position settlement parity verified.');
 
+  console.log('\n[STEP 4] Multi-Connection Rollback Isolation & Non-Interference Verification...');
+  // Verify that an unhandled exception on Connection A rolls back 100% of its writes without corrupting concurrent Connection B
+  const failedTxClientOrderId = randomUUID();
+  const successfulTxClientOrderId = randomUUID();
+
+  const balanceBeforeA = parseFloat((await db.query(`SELECT cash_balance FROM accounts WHERE account_id = $1`, [buyerAccId])).rows[0].cash_balance);
+  const balanceBeforeB = parseFloat((await db.query(`SELECT cash_balance FROM accounts WHERE account_id = $1`, [sellerAccId])).rows[0].cash_balance);
+
+  const txAFailurePromise = db.transaction(async (tx) => {
+    // Deduct $5,000 on Connection A
+    await tx.query(`UPDATE accounts SET cash_balance = cash_balance - 5000 WHERE account_id = $1`, [buyerAccId]);
+    await tx.query(
+      `INSERT INTO orders (order_id, client_order_id, account_id, instrument_id, side, order_type, time_in_force, price, quantity, filled_qty, status, submitted_at, updated_at)
+       VALUES (6998, $1, $2, 1, 'BUY', 'LIMIT', 'DAY', 1400.0, 10, 0, 'OPEN', NOW(), NOW())`,
+      [failedTxClientOrderId, buyerAccId]
+    );
+    // Simulate fatal unexpected failure on Connection A
+    throw new Error('SIMULATED_CRITICAL_TRANSACTION_CRASH');
+  }).catch((err) => {
+    if (err.message !== 'SIMULATED_CRITICAL_TRANSACTION_CRASH') throw err;
+    return 'ROLLED_BACK';
+  });
+
+  const txBSuccessPromise = db.transaction(async (tx) => {
+    // Add $10,000 on Connection B
+    await tx.query(`UPDATE accounts SET cash_balance = cash_balance + 10000 WHERE account_id = $1`, [sellerAccId]);
+    await tx.query(
+      `INSERT INTO orders (order_id, client_order_id, account_id, instrument_id, side, order_type, time_in_force, price, quantity, filled_qty, status, submitted_at, updated_at)
+       VALUES (6999, $1, $2, 1, 'SELL', 'LIMIT', 'DAY', 1400.0, 10, 0, 'OPEN', NOW(), NOW())`,
+      [successfulTxClientOrderId, sellerAccId]
+    );
+    return 'COMMITTED';
+  });
+
+  const [resA, resB] = await Promise.all([txAFailurePromise, txBSuccessPromise]);
+
+  if (resA !== 'ROLLED_BACK' || resB !== 'COMMITTED') {
+    throw new Error(`Unexpected transaction outcomes: TxA = ${resA}, TxB = ${resB}`);
+  }
+
+  // Verify Connection A's writes were 100% rolled back:
+  const orderACheck = await db.query(`SELECT * FROM orders WHERE client_order_id = $1`, [failedTxClientOrderId]);
+  if (orderACheck.rows.length !== 0) {
+    throw new Error(`CRITICAL DEFECT: Rolled-back order from Connection A leaked into database!`);
+  }
+  const balanceAfterA = parseFloat((await db.query(`SELECT cash_balance FROM accounts WHERE account_id = $1`, [buyerAccId])).rows[0].cash_balance);
+  if (Math.abs(balanceAfterA - balanceBeforeA) > 0.001) {
+    throw new Error(`CRITICAL DEFECT: Account balance modified by rolled-back transaction on Connection A! Expected ${balanceBeforeA}, got ${balanceAfterA}`);
+  }
+  console.log('  ✓ Connection A failure cleanly rolled back 100% of writes (0 residual rows, cash intact).');
+
+  // Verify Connection B's writes were 100% committed without corruption:
+  const orderBCheck = await db.query(`SELECT * FROM orders WHERE client_order_id = $1`, [successfulTxClientOrderId]);
+  if (orderBCheck.rows.length !== 1) {
+    throw new Error(`CRITICAL DEFECT: Concurrent committed transaction from Connection B was not persisted!`);
+  }
+  const balanceAfterB = parseFloat((await db.query(`SELECT cash_balance FROM accounts WHERE account_id = $1`, [sellerAccId])).rows[0].cash_balance);
+  if (Math.abs(balanceAfterB - (balanceBeforeB + 10000)) > 0.001) {
+    throw new Error(`CRITICAL DEFECT: Account balance for Connection B not updated properly! Expected ${balanceBeforeB + 10000}, got ${balanceAfterB}`);
+  }
+  console.log('  ✓ Connection B committed cleanly without interference from Connection A rollback.');
+
   // Clean up any remaining open test orders to prevent book pollution in subsequent suites
   await db.query(`UPDATE orders SET status = 'CANCELLED' WHERE account_id IN ($1, $2) AND status IN ('OPEN', 'PARTIALLY_FILLED')`, [buyerAccId, sellerAccId]);
 

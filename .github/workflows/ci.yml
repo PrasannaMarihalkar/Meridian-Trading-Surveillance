@@ -120,12 +120,26 @@ jobs:
           NODE_ENV: test
 
   # ─────────────────────────────────────────────────────────────────
-  # Job 5: Backend API tests
+  # Job 5: Backend API, Concurrency & Transaction Affinity Tests
   # ─────────────────────────────────────────────────────────────────
   backend-tests:
-    name: Backend API Tests
+    name: Backend API, Concurrency & Transaction Affinity Tests (Native PostgreSQL 16 & PGlite)
     runs-on: ubuntu-latest
     needs: [type-check, db-schema-validate]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: meridian
+          POSTGRES_PASSWORD: meridian_ci_password
+          POSTGRES_DB: meridian_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -142,14 +156,40 @@ jobs:
           path: node_modules
           key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
-      - name: Initialize test database
+      - name: Initialize Native PostgreSQL 16 database
         run: npx tsx scripts/init_db.ts
         env:
+          DATABASE_URL: postgresql://meridian:meridian_ci_password@localhost:5432/meridian_test
           NODE_ENV: test
 
-      - name: Run backend API tests
+      - name: Run transaction connection affinity test (Native PostgreSQL 16)
+        run: npx tsx tests/test_transaction_affinity.ts
+        env:
+          DATABASE_URL: postgresql://meridian:meridian_ci_password@localhost:5432/meridian_test
+          NODE_ENV: test
+
+      - name: Run backend API tests (Native PostgreSQL 16)
         run: npx tsx tests/api.test.ts
         env:
+          DATABASE_URL: postgresql://meridian:meridian_ci_password@localhost:5432/meridian_test
+          NODE_ENV: test
+          JWT_SECRET: ${{ secrets.JWT_SECRET || 'ci-test-secret-do-not-use-in-production' }}
+
+      - name: Run multi-connection concurrency & financial parity stress test (Native PostgreSQL 16)
+        run: npx tsx tests/concurrency.test.ts
+        env:
+          DATABASE_URL: postgresql://meridian:meridian_ci_password@localhost:5432/meridian_test
+          NODE_ENV: test
+
+      - name: Run backend API & concurrency verification on embedded PGlite
+        run: |
+          npx tsx scripts/init_db.ts
+          npx tsx tests/test_transaction_affinity.ts
+          npx tsx tests/api.test.ts
+          npx tsx tests/concurrency.test.ts
+        env:
+          DATABASE_URL: ''
+          USE_PGLITE: 'true'
           NODE_ENV: test
           JWT_SECRET: ${{ secrets.JWT_SECRET || 'ci-test-secret-do-not-use-in-production' }}
 

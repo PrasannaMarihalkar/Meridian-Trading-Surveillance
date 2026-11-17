@@ -182,62 +182,106 @@ void test_spsc_queue_concurrency() {
 }
 
 void test_gap_detector() {
-    std::cout << "[TEST] Running test_gap_detector..." << std::endl;
+    std::cout << "[TEST] Running exhaustive test_gap_detector..." << std::endl;
     GapDetector detector;
 
-    // Verify bounded memory footprint: fixed ~8 KB bitmap
-    std::cout << "  [INFO] GapDetector sizeof: " << sizeof(GapDetector) << " bytes (bounded, zero heap growth per packet)" << std::endl;
-    assert(sizeof(GapDetector) < 16384); // Must remain under 16 KB
+    // 1. Verify bounded memory footprint: 8 KB bitmap + 12 KB gap array + counters
+    std::cout << "  [INFO] GapDetector sizeof: " << sizeof(GapDetector) << " bytes (bounded, contiguous, zero heap allocation)" << std::endl;
+    assert(sizeof(GapDetector) <= 32768); // Strictly bounded under 32 KB
+    assert(sizeof(GapDetector) >= 20480); // Contiguous buffer containing 512 gaps and 1024 words
 
-    // 1. Sequential arrival of packets 1, 2, 3
-    detector.on_packet(1, 1000);
-    detector.on_packet(2, 2000);
-    detector.on_packet(3, 3000);
-    assert(detector.total_received() == 3);
+    // 2. Sequential arrival of packets 1..100
+    for (uint64_t seq = 1; seq <= 100; ++seq) {
+        detector.on_packet(seq, seq * 1000);
+    }
+    assert(detector.total_received() == 100);
     assert(detector.total_lost() == 0);
     assert(detector.duplicates() == 0);
-
-    // 2. Duplicate arrival of packet 2
-    detector.on_packet(2, 3500);
-    assert(detector.total_received() == 4);
-    assert(detector.duplicates() == 1);
-    assert(detector.total_lost() == 0);
-
-    // 3. Skip packets 4, 5 and receive packet 6 (gap [4, 5])
-    detector.on_packet(6, 6000);
-    assert(detector.total_lost() == 2);
-    assert(detector.gaps().size() == 1);
-    assert(detector.gaps()[0].start == 4);
-    assert(detector.gaps()[0].end == 5);
-
-    // 4. Out-of-order arrival of packet 4 (partial gap resolution)
-    detector.on_packet(4, 7000);
-    assert(detector.total_lost() == 1);
-    assert(detector.out_of_order() == 1);
-    assert(detector.gaps()[0].start == 5);
-    assert(detector.gaps()[0].end == 5);
-
-    // 5. Out-of-order arrival of packet 5 (complete gap resolution)
-    detector.on_packet(5, 8000);
-    assert(detector.total_lost() == 0);
-    assert(detector.out_of_order() == 2);
+    assert(detector.out_of_order() == 0);
+    assert(detector.stale_packets() == 0);
     assert(detector.gaps().empty());
 
-    // 6. Advance window significantly: advance to seq 100,000
-    uint64_t high_seq = 100000;
-    detector.on_packet(high_seq, 90000);
-    assert(detector.total_lost() > 0);
+    // 3. Duplicate packet arrivals
+    detector.on_packet(50, 100500);
+    detector.on_packet(100, 100600);
+    assert(detector.total_received() == 102);
+    assert(detector.duplicates() == 2);
+    assert(detector.total_lost() == 0);
 
-    // 7. Stale packet arrival: packet 10 arrives when max_seq_ is 100,000 (age = 99,990 > 65,536 window)
+    // 4. Large forward jump within window (delta = 50,000 packets)
+    // Advance from seq 100 to seq 50,101 -> gap [101, 50100]
+    detector.on_packet(50101, 200000);
+    assert(detector.total_received() == 103);
+    assert(detector.total_lost() == 50000);
+    assert(detector.gaps().size() == 1);
+    assert(detector.gaps()[0].start == 101);
+    assert(detector.gaps()[0].end == 50100);
+    assert(detector.gaps()[0].size() == 50000);
+
+    // 5. Out-of-order arrival: resolve head of gap (packet 101)
+    detector.on_packet(101, 210000);
+    assert(detector.total_lost() == 49999);
+    assert(detector.out_of_order() == 1);
+    assert(detector.gaps().size() == 1);
+    assert(detector.gaps()[0].start == 102);
+    assert(detector.gaps()[0].end == 50100);
+
+    // 6. Out-of-order arrival: resolve tail of gap (packet 50100)
+    detector.on_packet(50100, 220000);
+    assert(detector.total_lost() == 49998);
+    assert(detector.out_of_order() == 2);
+    assert(detector.gaps().size() == 1);
+    assert(detector.gaps()[0].start == 102);
+    assert(detector.gaps()[0].end == 50099);
+
+    // 7. Out-of-order arrival: middle of gap (packet 25,000) splits gap into two
+    detector.on_packet(25000, 230000);
+    assert(detector.total_lost() == 49997);
+    assert(detector.out_of_order() == 3);
+    assert(detector.gaps().size() == 2);
+    assert(detector.gaps()[0].start == 102);
+    assert(detector.gaps()[0].end == 24999);
+    assert(detector.gaps()[1].start == 25001);
+    assert(detector.gaps()[1].end == 50099);
+
+    // 8. Duplicate of out-of-order packet (packet 25,000 arrives again)
+    detector.on_packet(25000, 240000);
+    assert(detector.duplicates() == 3);
+    assert(detector.out_of_order() == 3);
+
+    // 9. Stale packet arrival: packet 5 arrives when max_seq is 50101 + advance to 120,000
+    // Advance max_seq to 120,000 (jump = 69,899 >= 65,536 window horizon)
+    detector.on_packet(120000, 300000);
+    assert(detector.total_lost() > 0);
+    // Packet 10 is age 120000 - 10 = 119990 > 65536 -> stale
     uint64_t prev_stale = detector.stale_packets();
-    detector.on_packet(10, 95000);
+    detector.on_packet(10, 310000);
     assert(detector.stale_packets() == prev_stale + 1);
 
-    // 8. Large jump beyond entire window capacity (seq 300,000)
-    detector.on_packet(300000, 100000);
-    assert(detector.total_received() >= 8);
+    // 10. Max tracked gaps saturation test (512 distinct gaps)
+    GapDetector sat_detector;
+    sat_detector.on_packet(1, 1000);
+    // Create 512 discrete single-packet gaps by skipping odd sequence numbers
+    // Packet 3 -> gap [2,2] (1 gap)
+    // Packet 5 -> gap [4,4] (2 gaps)
+    // Packet 2*k + 1 -> gap [2*k, 2*k]
+    for (uint64_t k = 1; k <= 512; ++k) {
+        sat_detector.on_packet(2 * k + 1, 1000 + k * 10);
+    }
+    assert(sat_detector.gaps().size() == GapDetector::kMaxTrackedGaps);
+    assert(sat_detector.gaps_saturated() == 0);
 
-    std::cout << "  ✓ test_gap_detector passed (duplicates, gaps, out-of-order, stale, and memory bounds verified)" << std::endl;
+    // Attempt to introduce the 513th gap (must saturate safely without overflow or allocation)
+    sat_detector.on_packet(2 * 513 + 1, 10000);
+    assert(sat_detector.gaps().size() == GapDetector::kMaxTrackedGaps);
+    assert(sat_detector.gaps_saturated() == 1);
+
+    // Resolve one existing gap (packet 2 arrives)
+    sat_detector.on_packet(2, 10010);
+    assert(sat_detector.gaps().size() == GapDetector::kMaxTrackedGaps - 1);
+    assert(sat_detector.out_of_order() == 1);
+
+    std::cout << "  ✓ test_gap_detector passed (exhaustive: sequential, large jumps, bit clearing, splits, stale, duplicates, saturation)" << std::endl;
 }
 
 int main() {

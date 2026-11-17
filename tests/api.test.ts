@@ -25,6 +25,16 @@ async function runTests() {
 
   const db = await getDatabase();
 
+  process.env.NODE_ENV = 'test';
+  const { server } = await import('../backend/server.js');
+  const serverPort = await new Promise<number>((resolve) => {
+    server.listen(0, () => {
+      const addr = server.address() as any;
+      resolve(addr.port);
+    });
+  });
+  const baseUrl = `http://localhost:${serverPort}`;
+
   // Re-seed user password hashes for test predictability
   await db.query(
     `UPDATE users SET password_hash = '$2b$10$7QlrqW9o3nnVMyXBeI82WesAjib/ACpDAjyrykCtpMvZmDZFG.9DK', failed_logins = 0, locked_until = NULL`
@@ -249,7 +259,7 @@ async function runTests() {
 
     // Assign to analyst
     const assigned = await SurveillanceService.assignAlert(alertId, 102);
-    if (assigned.status !== 'IN_REVIEW' || assigned.assigned_to !== 102) {
+    if (assigned.status !== 'IN_REVIEW' || Number(assigned.assigned_to) !== 102) {
       throw new Error('Alert was not assigned properly');
     }
 
@@ -343,10 +353,155 @@ async function runTests() {
     }
   });
 
+  // Test 12: HTTP API Idempotency Contract - Missing Idempotency Key (400 Bad Request)
+  await test('HTTP API Contract: Missing idempotency key returns 400 Bad Request', async () => {
+    const res = await fetch(`${baseUrl}/api/orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${traderToken}`
+      },
+      body: JSON.stringify({
+        accountId: testAccountId,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1390.0,
+        quantity: 5
+      })
+    });
+
+    if (res.status !== 400) {
+      throw new Error(`Expected HTTP 400 for missing idempotency key, got ${res.status}`);
+    }
+    const data = await res.json();
+    if (!data.error || !data.error.includes('Missing required idempotency key')) {
+      throw new Error(`Expected missing idempotency error message, got: ${data.error}`);
+    }
+  });
+
+  // Test 13: HTTP API Idempotency Contract - Invalid UUID Format (400 Bad Request)
+  await test('HTTP API Contract: Non-UUID idempotency key returns 400 Bad Request', async () => {
+    const res = await fetch(`${baseUrl}/api/orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${traderToken}`,
+        'Idempotency-Key': 'not-a-valid-uuid-key'
+      },
+      body: JSON.stringify({
+        accountId: testAccountId,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1390.0,
+        quantity: 5
+      })
+    });
+
+    if (res.status !== 400) {
+      throw new Error(`Expected HTTP 400 for non-UUID idempotency key, got ${res.status}`);
+    }
+    const data = await res.json();
+    if (!data.error || !data.error.includes('must be a valid UUID')) {
+      throw new Error(`Expected invalid UUID error message, got: ${data.error}`);
+    }
+  });
+
+  // Test 14: HTTP API Idempotency Contract - Header vs Body Key Mismatch (400 Bad Request)
+  await test('HTTP API Contract: Mismatch between header and body key returns 400 Bad Request', async () => {
+    const headerKey = randomUUID();
+    const bodyKey = randomUUID();
+
+    const res = await fetch(`${baseUrl}/api/orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${traderToken}`,
+        'Idempotency-Key': headerKey
+      },
+      body: JSON.stringify({
+        accountId: testAccountId,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1390.0,
+        quantity: 5,
+        clientOrderId: bodyKey
+      })
+    });
+
+    if (res.status !== 400) {
+      throw new Error(`Expected HTTP 400 for mismatched idempotency keys, got ${res.status}`);
+    }
+    const data = await res.json();
+    if (!data.error || !data.error.includes('mismatch')) {
+      throw new Error(`Expected mismatch error message, got: ${data.error}`);
+    }
+  });
+
+  // Test 15: HTTP API Idempotency Contract - X-Idempotency-Key Header Support & Retry Semantics
+  await test('HTTP API Contract: X-Idempotency-Key header is accepted and retries return original order', async () => {
+    const testKey = randomUUID();
+
+    // First attempt
+    const res1 = await fetch(`${baseUrl}/api/orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${traderToken}`,
+        'X-Idempotency-Key': testKey
+      },
+      body: JSON.stringify({
+        accountId: testAccountId,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1392.0,
+        quantity: 8
+      })
+    });
+
+    if (res1.status !== 201) {
+      const err = await res1.json();
+      throw new Error(`Expected HTTP 201 on initial order, got ${res1.status}: ${err.error}`);
+    }
+    const data1 = await res1.json();
+
+    // Second attempt (simulating network retry)
+    const res2 = await fetch(`${baseUrl}/api/orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${traderToken}`,
+        'X-Idempotency-Key': testKey
+      },
+      body: JSON.stringify({
+        accountId: testAccountId,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1392.0,
+        quantity: 8
+      })
+    });
+
+    if (res2.status !== 201) {
+      const err = await res2.json();
+      throw new Error(`Expected HTTP 201 on idempotent retry, got ${res2.status}: ${err.error}`);
+    }
+    const data2 = await res2.json();
+
+    if (data1.order.order_id !== data2.order.order_id) {
+      throw new Error(`Expected identical orderId on retry: ${data1.order.order_id} vs ${data2.order.order_id}`);
+    }
+  });
+
   console.log(`\n================================================================`);
   console.log(`TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log(`================================================================\n`);
 
+  server.close();
   await db.close();
   if (failed > 0) {
     process.exit(1);

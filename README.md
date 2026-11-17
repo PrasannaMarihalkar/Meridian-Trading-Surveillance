@@ -172,25 +172,34 @@ Open **`http://localhost:4000`** in your browser.
 ## 7. Verification & Testing
 
 ```bash
-# 1. Run Backend Integration & Idempotency Test Suite (11/11 passed)
+# 1. Run Complete Automated Test Suite (Affinity + API + Concurrency + C++ Bridge)
+npm run test:all
+
+# 2. Run Backend Integration & Idempotency Test Suite (15/15 passed)
 npm test
 
-# 2. Run Database Concurrency, Row-Locking & Financial Parity Stress Test
+# 3. Run PostgreSQL Transaction Connection Affinity Verification
+npm run test:affinity
+
+# 4. Run Multi-Connection Concurrency, Row-Locking & Rollback Isolation Stress Test
 npm run test:concurrency
 
-# 3. Run Hardened C++ Stdio IPC Bridge Test (6/6 passed)
+# 5. Run Hardened C++ Stdio IPC Bridge Test (6/6 passed)
 npm run test:bridge
 
-# 4. Verify Database Schema, Atomicity & Rollbacks on Disposable Instance
+# 6. Verify Database Schema, Atomicity & Rollbacks on Disposable Instance
 npx tsx scripts/verify_disposable_db.ts
 
-# 5. Execute All 17 Official College Demonstration SQL Queries
+# 7. Execute All 17 Official College Demonstration SQL Queries
 npm run demo:queries
 
-# 6. Compile and Run Standalone C++ Matching Engine Tests (Linux / WSL)
+# 8. Compile and Run Standalone C++ Matching Engine Tests (Linux / WSL)
 g++ -std=c++20 -O3 -pthread -Iengine/include engine/src/order_book.cpp engine/tests/test_order_book.cpp -o test_ob && ./test_ob
 
-# 7. Run C++ High-Throughput Benchmark (100,000 orders)
+# 9. Run C++ Engine Tests with Memory Sanitizers (AddressSanitizer & UndefinedBehaviorSanitizer)
+g++ -std=c++20 -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -Iengine/include engine/src/order_book.cpp engine/tests/test_order_book.cpp -o test_ob_asan && ./test_ob_asan
+
+# 10. Run C++ High-Throughput Benchmark (100,000 orders)
 g++ -std=c++20 -O3 -pthread -Iengine/include engine/src/order_book.cpp engine/benchmarks/benchmark_engine.cpp -o bench_ob && ./bench_ob
 ```
 

@@ -24262,15 +24262,24 @@
       setOrderError(null);
       setOrderSuccess(null);
       try {
+        const clientOrderId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+          const r = Math.random() * 16 | 0;
+          const v = c === "x" ? r : r & 3 | 8;
+          return v.toString(16);
+        });
         const res = await apiRequest("/orders", {
           method: "POST",
+          headers: {
+            "Idempotency-Key": clientOrderId
+          },
           body: JSON.stringify({
             accountId: user.accountId,
             instrumentId: selectedInstId,
             side,
             orderType,
             price: parseFloat(price) || 0,
-            quantity: parseInt(quantity, 10)
+            quantity: parseInt(quantity, 10),
+            clientOrderId
           })
         });
         const tradeCount = res.trades?.length || 0;
