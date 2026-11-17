@@ -158,6 +158,51 @@ export function App() {
         </div>
       </header>
 
+      {/* Simulation Notice Banner */}
+      <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-1.5 text-center text-[11px] text-amber-300 font-mono flex items-center justify-center space-x-2">
+        <span>⚠️ <strong>SIMULATED TRADING ENVIRONMENT</strong> — Demonstration & Academic Learning Lab (PES University Level 3). No Real Capital at Risk.</span>
+      </div>
+
+      {/* Mobile Navigation Tabs */}
+      <div className="flex md:hidden bg-slate-900 border-b border-slate-800 px-3 py-1.5 overflow-x-auto space-x-1 font-sans">
+        <button
+          onClick={() => setActiveTab('TRADING')}
+          className={`flex items-center space-x-1 px-3 py-1 rounded-lg text-xs whitespace-nowrap font-medium transition ${
+            activeTab === 'TRADING' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <TrendingUp className="w-3.5 h-3.5" />
+          <span>Trading</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('SURVEILLANCE')}
+          className={`flex items-center space-x-1 px-3 py-1 rounded-lg text-xs whitespace-nowrap font-medium transition ${
+            activeTab === 'SURVEILLANCE' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Shield className="w-3.5 h-3.5" />
+          <span>Surveillance</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('SYSTEM')}
+          className={`flex items-center space-x-1 px-3 py-1 rounded-lg text-xs whitespace-nowrap font-medium transition ${
+            activeTab === 'SYSTEM' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <History className="w-3.5 h-3.5" />
+          <span>Audit Trail</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('COLLEGE')}
+          className={`flex items-center space-x-1 px-3 py-1 rounded-lg text-xs whitespace-nowrap font-medium transition ${
+            activeTab === 'COLLEGE' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <BookOpen className="w-3.5 h-3.5" />
+          <span>Showcase</span>
+        </button>
+      </div>
+
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4">
         {activeTab === 'TRADING' && <TradingTerminal user={user} />}

@@ -1,5 +1,6 @@
 import { getDatabase } from '../../database/db';
 import { Alert, AlertNote, AlertSeverity, AlertStatus, SurveillancePattern, SurveillanceSession } from '../types';
+import { broadcastMarketData } from '../websocket';
 
 export class SurveillanceService {
   /**
@@ -46,7 +47,10 @@ export class SurveillanceService {
            ELSE NULL 
          END), 250)::FLOAT AS avg_lifetime_ms,
          COUNT(*) FILTER (WHERE side = 'BUY')::INT AS buy_orders,
-         COUNT(*) FILTER (WHERE side = 'SELL')::INT AS sell_orders
+         COUNT(*) FILTER (WHERE side = 'SELL')::INT AS sell_orders,
+         COALESCE(SUM(quantity) FILTER (WHERE side = 'BUY'), 0)::BIGINT AS buy_qty,
+         COALESCE(SUM(quantity) FILTER (WHERE side = 'SELL'), 0)::BIGINT AS sell_qty,
+         COUNT(DISTINCT price) FILTER (WHERE status IN ('CANCELLED', 'OPEN', 'PARTIALLY_FILLED'))::INT AS distinct_price_levels
        FROM orders
        WHERE account_id = $1 AND instrument_id = $2
          AND submitted_at BETWEEN $3 AND $4`,
@@ -62,8 +66,20 @@ export class SurveillanceService {
       [params.accountId, params.instrumentId, start.toISOString(), end.toISOString()]
     );
 
+    const fillStatsRes = await db.query(
+      `SELECT 
+         COUNT(*) FILTER (WHERE side = 'BUY')::INT AS buy_fills,
+         COUNT(*) FILTER (WHERE side = 'SELL')::INT AS sell_fills,
+         COUNT(*)::INT AS total_fills
+       FROM fills
+       WHERE account_id = $1 AND instrument_id = $2
+         AND executed_at BETWEEN $3 AND $4`,
+      [params.accountId, params.instrumentId, start.toISOString(), end.toISOString()]
+    );
+
     const stats = orderStatsRes.rows[0];
     const tradeStats = tradeStatsRes.rows[0];
+    const fillStats = fillStatsRes.rows[0];
 
     const ordersPlaced = stats.total_orders || 1;
     const ordersCanceled = stats.cancelled_orders || 0;
@@ -86,14 +102,24 @@ export class SurveillanceService {
     const windowSeconds = Math.max(1, (end.getTime() - start.getTime()) / 1000);
     const msgRate = (ordersPlaced + ordersCanceled) / windowSeconds;
 
-    // Feature 6: book_imbalance_impact
-    const bookImbalance = cancelRatio > 0.7 ? 0.75 : 0.15;
+    // Feature 6: book_imbalance_impact (derived from order quantity disparity)
+    const totalOrderQty = (parseInt(stats.buy_qty, 10) + parseInt(stats.sell_qty, 10)) || 0;
+    const bookImbalance = totalOrderQty > 0 
+      ? Math.abs(parseInt(stats.buy_qty, 10) - parseInt(stats.sell_qty, 10)) / totalOrderQty 
+      : (cancelRatio > 0.7 ? 0.75 : 0.15);
 
-    // Feature 7: opposite_side_fill_ratio
-    const oppFillRatio = cancelRatio > 0.8 ? 0.08 : 0.45;
+    // Feature 7: opposite_side_fill_ratio (fills executed opposite to dominant quote side)
+    const totalFills = fillStats.total_fills || 0;
+    const dominantSide = stats.buy_orders >= stats.sell_orders ? 'BUY' : 'SELL';
+    const oppFills = dominantSide === 'BUY' ? fillStats.sell_fills : fillStats.buy_fills;
+    const oppFillRatio = totalFills > 0 
+      ? oppFills / totalFills 
+      : (cancelRatio > 0.8 ? 0.08 : 0.45);
 
-    // Feature 8: layering_depth
-    const layeringDepth = cancelRatio > 0.75 ? 3.5 : 0.5;
+    // Feature 8: layering_depth (number of distinct price tiers populated)
+    const layeringDepth = stats.distinct_price_levels > 0 
+      ? stats.distinct_price_levels 
+      : (cancelRatio > 0.75 ? 3.5 : 0.5);
 
     const featureVector = [
       parseFloat(cancelRatio.toFixed(2)),
@@ -186,6 +212,17 @@ export class SurveillanceService {
         [nextAlertId, session.session_id, bestMatch.pattern_id, maxSim, ruleFlags, severity]
       );
       alert = alertRes.rows[0];
+
+      // Broadcast real-time surveillance alert
+      try {
+        broadcastMarketData({
+          type: 'SURVEILLANCE_ALERT',
+          data: alert,
+          timestamp: new Date().toISOString()
+        });
+      } catch (wsErr) {
+        console.warn('[WS_BROADCAST] Surveillance alert broadcast error:', wsErr);
+      }
     }
 
     return { session, alert, matchedPattern: bestMatch || undefined };

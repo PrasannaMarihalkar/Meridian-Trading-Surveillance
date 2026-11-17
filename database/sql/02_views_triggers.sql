@@ -110,6 +110,18 @@ CREATE TRIGGER trg_orders_audit
 AFTER UPDATE ON orders
 FOR EACH ROW EXECUTE FUNCTION fn_audit_order_transitions();
 
+-- Trigger Function: Enforce Strict Immutability on Audit Log (Append-Only)
+CREATE OR REPLACE FUNCTION fn_prevent_audit_log_mutation() RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'audit_log is an immutable append-only ledger: UPDATE and DELETE operations are forbidden.';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_audit_log_immutable ON audit_log;
+CREATE TRIGGER trg_audit_log_immutable
+BEFORE UPDATE OR DELETE ON audit_log
+FOR EACH ROW EXECUTE FUNCTION fn_prevent_audit_log_mutation();
+
 -- Trigger Function: Real-Time Position & Cash Settlement upon Fill Generation
 CREATE OR REPLACE FUNCTION fn_process_fill_settlement() RETURNS TRIGGER AS $$
 DECLARE

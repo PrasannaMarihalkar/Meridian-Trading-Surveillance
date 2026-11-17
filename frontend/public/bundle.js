@@ -25012,7 +25012,39 @@
         className: "px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold transition shadow-md shadow-blue-900/30"
       },
       "Sign In / Demo"
-    )))), /* @__PURE__ */ import_react9.default.createElement("main", { className: "flex-1 max-w-7xl w-full mx-auto p-4" }, activeTab === "TRADING" && /* @__PURE__ */ import_react9.default.createElement(TradingTerminal, { user }), activeTab === "SURVEILLANCE" && /* @__PURE__ */ import_react9.default.createElement(SurveillanceConsole, { user }), activeTab === "SYSTEM" && /* @__PURE__ */ import_react9.default.createElement(SystemAudit, null), activeTab === "COLLEGE" && /* @__PURE__ */ import_react9.default.createElement(CollegeShowcase, null)), /* @__PURE__ */ import_react9.default.createElement("footer", { className: "bg-slate-950 border-t border-slate-900 py-3 text-center text-xs font-mono text-slate-500" }, /* @__PURE__ */ import_react9.default.createElement("p", null, "MERIDIAN Trading & Surveillance System | PES University DBMS Experiential Learning Project (Level 3) | USN: PES1UG24CS684")), /* @__PURE__ */ import_react9.default.createElement(
+    )))), /* @__PURE__ */ import_react9.default.createElement("div", { className: "bg-amber-500/10 border-b border-amber-500/20 px-4 py-1.5 text-center text-[11px] text-amber-300 font-mono flex items-center justify-center space-x-2" }, /* @__PURE__ */ import_react9.default.createElement("span", null, "\u26A0\uFE0F ", /* @__PURE__ */ import_react9.default.createElement("strong", null, "SIMULATED TRADING ENVIRONMENT"), " \u2014 Demonstration & Academic Learning Lab (PES University Level 3). No Real Capital at Risk.")), /* @__PURE__ */ import_react9.default.createElement("div", { className: "flex md:hidden bg-slate-900 border-b border-slate-800 px-3 py-1.5 overflow-x-auto space-x-1 font-sans" }, /* @__PURE__ */ import_react9.default.createElement(
+      "button",
+      {
+        onClick: () => setActiveTab("TRADING"),
+        className: `flex items-center space-x-1 px-3 py-1 rounded-lg text-xs whitespace-nowrap font-medium transition ${activeTab === "TRADING" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`
+      },
+      /* @__PURE__ */ import_react9.default.createElement(TrendingUp, { className: "w-3.5 h-3.5" }),
+      /* @__PURE__ */ import_react9.default.createElement("span", null, "Trading")
+    ), /* @__PURE__ */ import_react9.default.createElement(
+      "button",
+      {
+        onClick: () => setActiveTab("SURVEILLANCE"),
+        className: `flex items-center space-x-1 px-3 py-1 rounded-lg text-xs whitespace-nowrap font-medium transition ${activeTab === "SURVEILLANCE" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`
+      },
+      /* @__PURE__ */ import_react9.default.createElement(Shield, { className: "w-3.5 h-3.5" }),
+      /* @__PURE__ */ import_react9.default.createElement("span", null, "Surveillance")
+    ), /* @__PURE__ */ import_react9.default.createElement(
+      "button",
+      {
+        onClick: () => setActiveTab("SYSTEM"),
+        className: `flex items-center space-x-1 px-3 py-1 rounded-lg text-xs whitespace-nowrap font-medium transition ${activeTab === "SYSTEM" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`
+      },
+      /* @__PURE__ */ import_react9.default.createElement(RotateCcwClock, { className: "w-3.5 h-3.5" }),
+      /* @__PURE__ */ import_react9.default.createElement("span", null, "Audit Trail")
+    ), /* @__PURE__ */ import_react9.default.createElement(
+      "button",
+      {
+        onClick: () => setActiveTab("COLLEGE"),
+        className: `flex items-center space-x-1 px-3 py-1 rounded-lg text-xs whitespace-nowrap font-medium transition ${activeTab === "COLLEGE" ? "bg-purple-600 text-white" : "text-slate-400 hover:text-white"}`
+      },
+      /* @__PURE__ */ import_react9.default.createElement(BookOpen, { className: "w-3.5 h-3.5" }),
+      /* @__PURE__ */ import_react9.default.createElement("span", null, "Showcase")
+    )), /* @__PURE__ */ import_react9.default.createElement("main", { className: "flex-1 max-w-7xl w-full mx-auto p-4" }, activeTab === "TRADING" && /* @__PURE__ */ import_react9.default.createElement(TradingTerminal, { user }), activeTab === "SURVEILLANCE" && /* @__PURE__ */ import_react9.default.createElement(SurveillanceConsole, { user }), activeTab === "SYSTEM" && /* @__PURE__ */ import_react9.default.createElement(SystemAudit, null), activeTab === "COLLEGE" && /* @__PURE__ */ import_react9.default.createElement(CollegeShowcase, null)), /* @__PURE__ */ import_react9.default.createElement("footer", { className: "bg-slate-950 border-t border-slate-900 py-3 text-center text-xs font-mono text-slate-500" }, /* @__PURE__ */ import_react9.default.createElement("p", null, "MERIDIAN Trading & Surveillance System | PES University DBMS Experiential Learning Project (Level 3) | USN: PES1UG24CS684")), /* @__PURE__ */ import_react9.default.createElement(
       AuthModal,
       {
         isOpen: showAuthModal,

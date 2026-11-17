@@ -2,6 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthTokenPayload, UserRole } from '../types';
 
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('[FATAL_SECURITY] JWT_SECRET environment variable must be explicitly defined in production.');
+}
+
 export const JWT_SECRET = process.env.JWT_SECRET || 'meridian-super-secure-dev-secret-key-2026';
 
 export interface AuthenticatedRequest extends Request {

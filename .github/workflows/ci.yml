@@ -1,0 +1,319 @@
+name: MERIDIAN CI Pipeline
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # Job 1: Install dependencies (cached)
+  # ─────────────────────────────────────────────────────────────────
+  dependency-install:
+    name: Install Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 2: TypeScript type-check
+  # ─────────────────────────────────────────────────────────────────
+  type-check:
+    name: TypeScript Type Check
+    runs-on: ubuntu-latest
+    needs: dependency-install
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Run TypeScript type check
+        run: npx tsc --noEmit
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 3: ESLint
+  # ─────────────────────────────────────────────────────────────────
+  lint:
+    name: ESLint
+    runs-on: ubuntu-latest
+    needs: dependency-install
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install ESLint and TypeScript ESLint plugin
+        run: npm install --no-save eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin
+
+      - name: Run ESLint on backend
+        run: npx eslint backend/ --ext .ts --max-warnings 50
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 4: Database schema validation (PGlite, no external DB needed)
+  # ─────────────────────────────────────────────────────────────────
+  db-schema-validate:
+    name: DB Schema Validation
+    runs-on: ubuntu-latest
+    needs: dependency-install
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Validate DB schema with PGlite (no external DB required)
+        run: npx tsx scripts/verify_disposable_db.ts
+        env:
+          NODE_ENV: test
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 5: Backend API tests
+  # ─────────────────────────────────────────────────────────────────
+  backend-tests:
+    name: Backend API Tests
+    runs-on: ubuntu-latest
+    needs: [type-check, db-schema-validate]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Run backend API tests
+        run: npx tsx tests/api.test.ts
+        env:
+          NODE_ENV: test
+          JWT_SECRET: ${{ secrets.JWT_SECRET || 'ci-test-secret-do-not-use-in-production' }}
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 6: Frontend build
+  # ─────────────────────────────────────────────────────────────────
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    needs: [type-check]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Build frontend bundle
+        run: npx tsx scripts/build_frontend.ts
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/public/
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 7: C++ engine build and tests (Linux, g++ available)
+  # ─────────────────────────────────────────────────────────────────
+  cpp-build-and-test:
+    name: C++ Engine Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y g++ cmake
+
+      - name: Verify g++ version (need C++20 support)
+        run: g++ --version
+
+      - name: Build C++ engine and test binary
+        run: |
+          g++ -std=c++20 -O2 -pthread \
+            -Iengine/include \
+            engine/src/order_book.cpp \
+            engine/tests/test_order_book.cpp \
+            -o test_ob
+
+      - name: Run C++ order book tests
+        run: ./test_ob
+
+      - name: Build with AddressSanitizer (optional, non-blocking)
+        run: |
+          g++ -std=c++20 -O1 -fsanitize=address,undefined -pthread \
+            -Iengine/include \
+            engine/src/order_book.cpp \
+            engine/tests/test_order_book.cpp \
+            -o test_ob_asan && ./test_ob_asan
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 8: Secret scanning
+  # ─────────────────────────────────────────────────────────────────
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for TruffleHog
+
+      - name: TruffleHog secret scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --debug --only-verified
+        continue-on-error: true  # Non-blocking for college project; remove for production
+
+      - name: Grep for common hardcoded secrets (always runs)
+        run: |
+          echo "Scanning for hardcoded secrets patterns..."
+          FOUND=0
+
+          # Check for hardcoded JWT secrets
+          if grep -rn --include="*.ts" --include="*.js" --include="*.json" \
+            -E "(jwt_secret|JWT_SECRET)\s*[:=]\s*['\"][^'\"]{8,}['\"]" \
+            --exclude-dir=node_modules --exclude-dir=.git .; then
+            echo "WARNING: Possible hardcoded JWT secret found"
+            FOUND=1
+          fi
+
+          # Check for hardcoded passwords
+          if grep -rn --include="*.ts" --include="*.js" \
+            -E "password\s*[:=]\s*['\"][^'\"]{6,}['\"]" \
+            --exclude-dir=node_modules --exclude-dir=.git \
+            --exclude="*.test.ts" --exclude="*.example" .; then
+            echo "WARNING: Possible hardcoded password found"
+            FOUND=1
+          fi
+
+          if [ $FOUND -eq 1 ]; then
+            echo "Secret scan found potential issues. Review above output."
+            exit 1
+          else
+            echo "No hardcoded secrets found."
+          fi
+
+  # ─────────────────────────────────────────────────────────────────
+  # Job 9: npm audit for vulnerabilities
+  # ─────────────────────────────────────────────────────────────────
+  npm-audit:
+    name: npm Audit
+    runs-on: ubuntu-latest
+    needs: dependency-install
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Run npm audit (high severity only)
+        run: npm audit --audit-level=high
+        continue-on-error: true  # Remove for stricter security in production
+
+  # ─────────────────────────────────────────────────────────────────
+  # Final gate: all jobs must pass
+  # ─────────────────────────────────────────────────────────────────
+  ci-gate:
+    name: CI Gate (All Checks Pass)
+    runs-on: ubuntu-latest
+    needs:
+      - type-check
+      - lint
+      - db-schema-validate
+      - backend-tests
+      - frontend-build
+      - cpp-build-and-test
+      - secret-scan
+      - npm-audit
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "One or more CI jobs failed!"
+            exit 1
+          fi
+          echo "All CI checks passed!"
