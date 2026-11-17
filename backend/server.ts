@@ -12,6 +12,7 @@ import surveillanceRoutes from './routes/surveillanceRoutes';
 import systemRoutes from './routes/systemRoutes';
 import { initWebSocketServer } from './websocket';
 import { getDatabase } from '../database/db';
+import { rateLimiter } from './middleware/rateLimiter';
 
 dotenv.config();
 
@@ -41,6 +42,16 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
     }
   });
   next();
+});
+
+// Rate Limiting: 30 requests/min for auth routes, 300 requests/min for general API
+app.use('/api/auth/login', rateLimiter(60000, 30, 'Too many login attempts. Please wait 1 minute.'));
+app.use('/api/auth/register', rateLimiter(60000, 15, 'Too many registration attempts. Please wait 1 minute.'));
+app.use('/api', rateLimiter(60000, 300));
+
+// Health aliases
+app.get(['/health', '/api/health'], (_req: Request, res: Response) => {
+  res.redirect('/api/system/health');
 });
 
 // Mount Routes

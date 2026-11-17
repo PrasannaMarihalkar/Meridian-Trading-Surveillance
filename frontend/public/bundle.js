@@ -6,14 +6,6 @@
   var __getOwnPropNames = Object.getOwnPropertyNames;
   var __getProtoOf = Object.getPrototypeOf;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
-  var __esm = (fn, res, err) => function __init() {
-    if (err) throw err[0];
-    try {
-      return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-    } catch (e) {
-      throw err = [e], e;
-    }
-  };
   var __commonJS = (cb, mod) => function __require() {
     try {
       return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
@@ -1372,7 +1364,7 @@
           return dispatcher;
         }
         "undefined" !== typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ && "function" === typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(Error());
-        var React7 = require_react(), Internals = {
+        var React8 = require_react(), Internals = {
           d: {
             f: noop,
             r: function() {
@@ -1390,7 +1382,7 @@
           },
           p: 0,
           findDOMNode: null
-        }, REACT_PORTAL_TYPE = /* @__PURE__ */ Symbol.for("react.portal"), REACT_RECOVERABLE_TYPE = /* @__PURE__ */ Symbol.for("react.recoverable"), REACT_OPTIMISTIC_KEY = /* @__PURE__ */ Symbol.for("react.optimistic_key"), ReactSharedInternals = React7.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+        }, REACT_PORTAL_TYPE = /* @__PURE__ */ Symbol.for("react.portal"), REACT_RECOVERABLE_TYPE = /* @__PURE__ */ Symbol.for("react.recoverable"), REACT_OPTIMISTIC_KEY = /* @__PURE__ */ Symbol.for("react.optimistic_key"), ReactSharedInternals = React8.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
         "function" === typeof Map && null != Map.prototype && "function" === typeof Map.prototype.forEach && "function" === typeof Set && null != Set.prototype && "function" === typeof Set.prototype.clear && "function" === typeof Set.prototype.forEach || console.error(
           "React depends on Map and Set built-in types. Make sure that you load a polyfill in older browsers. https://reactjs.org/link/react-polyfills"
         );
@@ -1398,11 +1390,11 @@
         exports.browser = function(reason) {
           return { $$typeof: REACT_RECOVERABLE_TYPE, _reason: reason };
         };
-        exports.createPortal = function(children, container) {
+        exports.createPortal = function(children, container2) {
           var key = 2 < arguments.length && void 0 !== arguments[2] ? arguments[2] : null;
-          if (!container || 1 !== container.nodeType && 9 !== container.nodeType && 11 !== container.nodeType)
+          if (!container2 || 1 !== container2.nodeType && 9 !== container2.nodeType && 11 !== container2.nodeType)
             throw Error("Target container is not a DOM element.");
-          return createPortal$1(children, container, null, key);
+          return createPortal$1(children, container2, null, key);
         };
         exports.flushSync = function(fn) {
           var previousTransition = ReactSharedInternals.T, previousUpdatePriority = Internals.p;
@@ -3076,7 +3068,7 @@
           node.defaultValue !== "" + value && (node.defaultValue = "" + value);
         }
         function validateOptionProps(element, props) {
-          null == props.value && ("object" === typeof props.children && null !== props.children ? React7.Children.forEach(props.children, function(child) {
+          null == props.value && ("object" === typeof props.children && null !== props.children ? React8.Children.forEach(props.children, function(child) {
             null == child || "string" === typeof child || "number" === typeof child || "bigint" === typeof child || didWarnInvalidChild || (didWarnInvalidChild = true, console.error(
               "Cannot infer the option value of complex children. Pass a `value` prop or use a plain string as children to <option>."
             ));
@@ -16163,8 +16155,8 @@
               if (null === targetInst$jscomp$0) return;
               var nodeTag = targetInst$jscomp$0.tag;
               if (3 === nodeTag || 4 === nodeTag) {
-                var container = targetInst$jscomp$0.stateNode.containerInfo;
-                if (container === targetContainer) break;
+                var container2 = targetInst$jscomp$0.stateNode.containerInfo;
+                if (container2 === targetContainer) break;
                 if (4 === nodeTag)
                   for (nodeTag = targetInst$jscomp$0.return; null !== nodeTag; ) {
                     var grandTag = nodeTag.tag;
@@ -16172,15 +16164,15 @@
                       return;
                     nodeTag = nodeTag.return;
                   }
-                for (; null !== container; ) {
-                  nodeTag = getClosestInstanceFromNode(container);
+                for (; null !== container2; ) {
+                  nodeTag = getClosestInstanceFromNode(container2);
                   if (null === nodeTag) return;
                   grandTag = nodeTag.tag;
                   if (5 === grandTag || 6 === grandTag || 26 === grandTag || 27 === grandTag) {
                     targetInst$jscomp$0 = ancestorInst = nodeTag;
                     continue a;
                   }
-                  container = container.parentNode;
+                  container2 = container2.parentNode;
                 }
               }
               targetInst$jscomp$0 = targetInst$jscomp$0.return;
@@ -18378,16 +18370,16 @@
         function commitTextUpdate(textInstance, oldText, newText) {
           textInstance.nodeValue = newText;
         }
-        function warnForReactChildrenConflict(container) {
-          if (!container.__reactWarnedAboutChildrenConflict) {
-            var props = container[internalPropsKey] || null;
+        function warnForReactChildrenConflict(container2) {
+          if (!container2.__reactWarnedAboutChildrenConflict) {
+            var props = container2[internalPropsKey] || null;
             if (null !== props) {
-              var fiber = getInstanceFromNode(container);
-              null !== fiber && ("string" === typeof props.children || "number" === typeof props.children ? (container.__reactWarnedAboutChildrenConflict = true, runWithFiberInDEV(fiber, function() {
+              var fiber = getInstanceFromNode(container2);
+              null !== fiber && ("string" === typeof props.children || "number" === typeof props.children ? (container2.__reactWarnedAboutChildrenConflict = true, runWithFiberInDEV(fiber, function() {
                 console.error(
                   'Cannot use a ref on a React element as a container to `createRoot` or `createPortal` if that element also sets "children" text content using React. It should be a leaf with no children. Otherwise it\'s ambiguous which children should be used.'
                 );
-              })) : null != props.dangerouslySetInnerHTML && (container.__reactWarnedAboutChildrenConflict = true, runWithFiberInDEV(fiber, function() {
+              })) : null != props.dangerouslySetInnerHTML && (container2.__reactWarnedAboutChildrenConflict = true, runWithFiberInDEV(fiber, function() {
                 console.error(
                   'Cannot use a ref on a React element as a container to `createRoot` or `createPortal` if that element also sets "dangerouslySetInnerHTML" using React. It should be a leaf with no children. Otherwise it\'s ambiguous which children should be used.'
                 );
@@ -18401,8 +18393,8 @@
         function removeChild(parentInstance, child) {
           parentInstance.removeChild(child);
         }
-        function removeChildFromContainer(container, child) {
-          (9 === container.nodeType ? container.body : "HTML" === container.nodeName ? container.ownerDocument.body : container).removeChild(child);
+        function removeChildFromContainer(container2, child) {
+          (9 === container2.nodeType ? container2.body : "HTML" === container2.nodeName ? container2.ownerDocument.body : container2).removeChild(child);
         }
         function clearHydrationBoundary(parentInstance, hydrationInstance) {
           var node = hydrationInstance, depth = 0;
@@ -18900,8 +18892,8 @@
             ) : observer.unobserve(childInstance);
           }), null != childInstance.reactFragments && childInstance.reactFragments.delete(fragmentInstance));
         }
-        function clearContainerSparingly(container) {
-          var nextNode = container.firstChild;
+        function clearContainerSparingly(container2) {
+          var nextNode = container2.firstChild;
           nextNode && 10 === nextNode.nodeType && (nextNode = nextNode.nextSibling);
           for (; nextNode; ) {
             var node = nextNode;
@@ -18919,7 +18911,7 @@
               case "LINK":
                 if ("stylesheet" === node.rel.toLowerCase()) continue;
             }
-            container.removeChild(node);
+            container2.removeChild(node);
           }
         }
         function canHydrateInstance(instance, type, props, inRootOrSingleton) {
@@ -19061,8 +19053,8 @@
           }
           return null;
         }
-        function commitHydratedContainer(container) {
-          retryIfBlockedOn(container);
+        function commitHydratedContainer(container2) {
+          retryIfBlockedOn(container2);
         }
         function commitHydratedActivityInstance(activityInstance) {
           retryIfBlockedOn(activityInstance);
@@ -19161,13 +19153,13 @@
             instance.removeAttributeNode(attributes[0]);
           detachDeletedInstance(instance);
         }
-        function getHoistableRoot(container) {
-          if ("function" === typeof container.getRootNode) {
-            var rootNode = container.getRootNode();
+        function getHoistableRoot(container2) {
+          if ("function" === typeof container2.getRootNode) {
+            var rootNode = container2.getRootNode();
             if (9 === rootNode.nodeType || 11 === rootNode.nodeType)
               return rootNode;
           }
-          return 9 === container.nodeType ? container : container.ownerDocument;
+          return 9 === container2.nodeType ? container2 : container2.ownerDocument;
         }
         function preconnectAs(rel, href, crossOrigin) {
           var ownerDocument = globalDocument;
@@ -19668,10 +19660,10 @@
           parentComponent = emptyContextObject;
           return parentComponent;
         }
-        function updateContainerImpl(rootFiber, lane, element, container, parentComponent, callback) {
+        function updateContainerImpl(rootFiber, lane, element, container2, parentComponent, callback) {
           if (injectedHook && "function" === typeof injectedHook.onScheduleFiberRoot)
             try {
-              injectedHook.onScheduleFiberRoot(rendererID, container, element);
+              injectedHook.onScheduleFiberRoot(rendererID, container2, element);
             } catch (err) {
               hasLoggedError || (hasLoggedError = true, console.error(
                 "React instrumentation encountered an error: %o",
@@ -19679,19 +19671,19 @@
               ));
             }
           parentComponent = getContextForSubtree(parentComponent);
-          null === container.context ? container.context = parentComponent : container.pendingContext = parentComponent;
+          null === container2.context ? container2.context = parentComponent : container2.pendingContext = parentComponent;
           isRendering && null !== current && !didWarnAboutNestedUpdates && (didWarnAboutNestedUpdates = true, console.error(
             "Render methods should be a pure function of props and state; triggering nested component updates from render is not allowed. If necessary, trigger nested updates in componentDidUpdate.\n\nCheck the render method of %s.",
             getComponentNameFromFiber(current) || "Unknown"
           ));
-          container = createUpdate(lane);
-          container.payload = { element };
+          container2 = createUpdate(lane);
+          container2.payload = { element };
           callback = void 0 === callback ? null : callback;
           null !== callback && ("function" !== typeof callback && console.error(
             "Expected the last optional `callback` argument to be a function. Instead received: %s.",
             callback
-          ), container.callback = callback);
-          element = enqueueUpdate(rootFiber, container, lane);
+          ), container2.callback = callback);
+          element = enqueueUpdate(rootFiber, container2, lane);
           null !== element && (startUpdateTimerByLane(lane, "root.render()", null), scheduleUpdateOnFiber(element, rootFiber, lane), entangleTransitions(element, rootFiber, lane));
         }
         function markRetryLaneImpl(fiber, retryLane) {
@@ -19724,22 +19716,22 @@
         function getCurrentFiberForDevTools() {
           return current;
         }
-        function dispatchDiscreteEvent(domEventName, eventSystemFlags, container, nativeEvent) {
+        function dispatchDiscreteEvent(domEventName, eventSystemFlags, container2, nativeEvent) {
           var prevTransition = ReactSharedInternals.T;
           ReactSharedInternals.T = null;
           var previousPriority = ReactDOMSharedInternals.p;
           try {
-            ReactDOMSharedInternals.p = DiscreteEventPriority, dispatchEvent(domEventName, eventSystemFlags, container, nativeEvent);
+            ReactDOMSharedInternals.p = DiscreteEventPriority, dispatchEvent(domEventName, eventSystemFlags, container2, nativeEvent);
           } finally {
             ReactDOMSharedInternals.p = previousPriority, ReactSharedInternals.T = prevTransition;
           }
         }
-        function dispatchContinuousEvent(domEventName, eventSystemFlags, container, nativeEvent) {
+        function dispatchContinuousEvent(domEventName, eventSystemFlags, container2, nativeEvent) {
           var prevTransition = ReactSharedInternals.T;
           ReactSharedInternals.T = null;
           var previousPriority = ReactDOMSharedInternals.p;
           try {
-            ReactDOMSharedInternals.p = ContinuousEventPriority, dispatchEvent(domEventName, eventSystemFlags, container, nativeEvent);
+            ReactDOMSharedInternals.p = ContinuousEventPriority, dispatchEvent(domEventName, eventSystemFlags, container2, nativeEvent);
           } finally {
             ReactDOMSharedInternals.p = previousPriority, ReactSharedInternals.T = prevTransition;
           }
@@ -20216,19 +20208,19 @@
         function ReactDOMHydrationRoot(internalRoot) {
           this._internalRoot = internalRoot;
         }
-        function warnIfReactDOMContainerInDEV(container) {
-          container[internalContainerInstanceKey] && (container._reactRootContainer ? console.error(
+        function warnIfReactDOMContainerInDEV(container2) {
+          container2[internalContainerInstanceKey] && (container2._reactRootContainer ? console.error(
             "You are calling ReactDOMClient.createRoot() on a container that was previously passed to ReactDOM.render(). This is not supported."
           ) : console.error(
             "You are calling ReactDOMClient.createRoot() on a container that has already been passed to createRoot() before. Instead, call root.render() on the existing root instead if you want to update it."
           ));
         }
         "undefined" !== typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ && "function" === typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(Error());
-        var Scheduler = require_scheduler(), React7 = require_react(), ReactDOM = require_react_dom(), searchTarget = null, searchBoundary = null, assign = Object.assign, REACT_LEGACY_ELEMENT_TYPE = /* @__PURE__ */ Symbol.for("react.element"), REACT_ELEMENT_TYPE = /* @__PURE__ */ Symbol.for("react.transitional.element"), REACT_PORTAL_TYPE = /* @__PURE__ */ Symbol.for("react.portal"), REACT_FRAGMENT_TYPE = /* @__PURE__ */ Symbol.for("react.fragment"), REACT_STRICT_MODE_TYPE = /* @__PURE__ */ Symbol.for("react.strict_mode"), REACT_PROFILER_TYPE = /* @__PURE__ */ Symbol.for("react.profiler"), REACT_CONSUMER_TYPE = /* @__PURE__ */ Symbol.for("react.consumer"), REACT_CONTEXT_TYPE = /* @__PURE__ */ Symbol.for("react.context"), REACT_FORWARD_REF_TYPE = /* @__PURE__ */ Symbol.for("react.forward_ref"), REACT_SUSPENSE_TYPE = /* @__PURE__ */ Symbol.for("react.suspense"), REACT_SUSPENSE_LIST_TYPE = /* @__PURE__ */ Symbol.for("react.suspense_list"), REACT_MEMO_TYPE = /* @__PURE__ */ Symbol.for("react.memo"), REACT_LAZY_TYPE = /* @__PURE__ */ Symbol.for("react.lazy");
+        var Scheduler = require_scheduler(), React8 = require_react(), ReactDOM = require_react_dom(), searchTarget = null, searchBoundary = null, assign = Object.assign, REACT_LEGACY_ELEMENT_TYPE = /* @__PURE__ */ Symbol.for("react.element"), REACT_ELEMENT_TYPE = /* @__PURE__ */ Symbol.for("react.transitional.element"), REACT_PORTAL_TYPE = /* @__PURE__ */ Symbol.for("react.portal"), REACT_FRAGMENT_TYPE = /* @__PURE__ */ Symbol.for("react.fragment"), REACT_STRICT_MODE_TYPE = /* @__PURE__ */ Symbol.for("react.strict_mode"), REACT_PROFILER_TYPE = /* @__PURE__ */ Symbol.for("react.profiler"), REACT_CONSUMER_TYPE = /* @__PURE__ */ Symbol.for("react.consumer"), REACT_CONTEXT_TYPE = /* @__PURE__ */ Symbol.for("react.context"), REACT_FORWARD_REF_TYPE = /* @__PURE__ */ Symbol.for("react.forward_ref"), REACT_SUSPENSE_TYPE = /* @__PURE__ */ Symbol.for("react.suspense"), REACT_SUSPENSE_LIST_TYPE = /* @__PURE__ */ Symbol.for("react.suspense_list"), REACT_MEMO_TYPE = /* @__PURE__ */ Symbol.for("react.memo"), REACT_LAZY_TYPE = /* @__PURE__ */ Symbol.for("react.lazy");
         /* @__PURE__ */ Symbol.for("react.scope");
         var REACT_ACTIVITY_TYPE = /* @__PURE__ */ Symbol.for("react.activity"), REACT_LEGACY_HIDDEN_TYPE = /* @__PURE__ */ Symbol.for("react.legacy_hidden");
         /* @__PURE__ */ Symbol.for("react.tracing_marker");
-        var REACT_MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel"), REACT_VIEW_TRANSITION_TYPE = /* @__PURE__ */ Symbol.for("react.view_transition"), REACT_RECOVERABLE_TYPE = /* @__PURE__ */ Symbol.for("react.recoverable"), MAYBE_ITERATOR_SYMBOL = Symbol.iterator, REACT_CLIENT_REFERENCE = /* @__PURE__ */ Symbol.for("react.client.reference"), isArrayImpl = Array.isArray, ReactSharedInternals = React7.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE, ReactDOMSharedInternals = ReactDOM.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE, NotPending = Object.freeze({
+        var REACT_MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel"), REACT_VIEW_TRANSITION_TYPE = /* @__PURE__ */ Symbol.for("react.view_transition"), REACT_RECOVERABLE_TYPE = /* @__PURE__ */ Symbol.for("react.recoverable"), MAYBE_ITERATOR_SYMBOL = Symbol.iterator, REACT_CLIENT_REFERENCE = /* @__PURE__ */ Symbol.for("react.client.reference"), isArrayImpl = Array.isArray, ReactSharedInternals = React8.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE, ReactDOMSharedInternals = ReactDOM.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE, NotPending = Object.freeze({
           pending: false,
           data: null,
           method: null,
@@ -23401,13 +23393,13 @@
           args = this._internalRoot;
           if (null !== args) {
             this._internalRoot = null;
-            var container = args.containerInfo;
+            var container2 = args.containerInfo;
             (executionContext & (RenderContext | CommitContext)) !== NoContext && console.error(
               "Attempted to synchronously unmount a root while React was already rendering. React cannot finish unmounting the root until the current render has completed, which may lead to a race condition."
             );
             updateContainerImpl(args.current, 2, null, args, null, null);
             flushSyncWork$1();
-            container[internalContainerInstanceKey] = null;
+            container2[internalContainerInstanceKey] = null;
           }
         };
         ReactDOMHydrationRoot.prototype.unstable_scheduleHydration = function(target) {
@@ -23420,7 +23412,7 @@
           }
         };
         (function() {
-          var isomorphicReactPackageVersion = React7.version;
+          var isomorphicReactPackageVersion = React8.version;
           if ("19.3.1" !== isomorphicReactPackageVersion)
             throw Error(
               'Incompatible React versions: The "react" and "react-dom" packages must have the exact same version. Instead got:\n  - react:      ' + (isomorphicReactPackageVersion + "\n  - react-dom:  19.3.1\nLearn more: https://react.dev/warnings/version-mismatch")
@@ -23474,10 +23466,10 @@
             "font-weight:bold"
           );
         }
-        exports.createRoot = function(container, options) {
-          if (!isValidContainer(container))
+        exports.createRoot = function(container2, options) {
+          if (!isValidContainer(container2))
             throw Error("Target container is not a DOM element.");
-          warnIfReactDOMContainerInDEV(container);
+          warnIfReactDOMContainerInDEV(container2);
           var isStrictMode = false, identifierPrefix = "", onUncaughtError = defaultOnUncaughtError, onCaughtError = defaultOnCaughtError, onRecoverableError = defaultOnRecoverableError;
           null !== options && void 0 !== options && (options.hydrate ? console.warn(
             "hydrate through createRoot is deprecated. Use ReactDOMClient.hydrateRoot(container, <App />) instead."
@@ -23485,7 +23477,7 @@
             "You passed a JSX element to createRoot. You probably meant to call root.render instead. Example usage:\n\n  let root = createRoot(domContainer);\n  root.render(<App />);"
           ), true === options.unstable_strictMode && (isStrictMode = true), void 0 !== options.identifierPrefix && (identifierPrefix = options.identifierPrefix), void 0 !== options.onUncaughtError && (onUncaughtError = options.onUncaughtError), void 0 !== options.onCaughtError && (onCaughtError = options.onCaughtError), void 0 !== options.onRecoverableError && (onRecoverableError = options.onRecoverableError));
           options = createFiberRoot(
-            container,
+            container2,
             1,
             false,
             null,
@@ -23498,21 +23490,21 @@
             onRecoverableError,
             defaultOnDefaultTransitionIndicator
           );
-          container[internalContainerInstanceKey] = options.current;
-          listenToAllSupportedEvents(container);
+          container2[internalContainerInstanceKey] = options.current;
+          listenToAllSupportedEvents(container2);
           return new ReactDOMRoot(options);
         };
-        exports.hydrateRoot = function(container, initialChildren, options) {
-          if (!isValidContainer(container))
+        exports.hydrateRoot = function(container2, initialChildren, options) {
+          if (!isValidContainer(container2))
             throw Error("Target container is not a DOM element.");
-          warnIfReactDOMContainerInDEV(container);
+          warnIfReactDOMContainerInDEV(container2);
           void 0 === initialChildren && console.error(
             "Must provide initial children as second argument to hydrateRoot. Example usage: hydrateRoot(domContainer, <App />)"
           );
           var isStrictMode = false, identifierPrefix = "", onUncaughtError = defaultOnUncaughtError, onCaughtError = defaultOnCaughtError, onRecoverableError = defaultOnRecoverableError, formState = null;
           null !== options && void 0 !== options && (true === options.unstable_strictMode && (isStrictMode = true), void 0 !== options.identifierPrefix && (identifierPrefix = options.identifierPrefix), void 0 !== options.onUncaughtError && (onUncaughtError = options.onUncaughtError), void 0 !== options.onCaughtError && (onCaughtError = options.onCaughtError), void 0 !== options.onRecoverableError && (onRecoverableError = options.onRecoverableError), void 0 !== options.formState && (formState = options.formState));
           initialChildren = createFiberRoot(
-            container,
+            container2,
             1,
             true,
             initialChildren,
@@ -23537,8 +23529,8 @@
           initialChildren.current.lanes = options;
           markRootUpdated$1(initialChildren, options);
           ensureRootIsScheduled(initialChildren);
-          container[internalContainerInstanceKey] = initialChildren.current;
-          listenToAllSupportedEvents(container);
+          container2[internalContainerInstanceKey] = initialChildren.current;
+          listenToAllSupportedEvents(container2);
           return new ReactDOMHydrationRoot(initialChildren);
         };
         exports.version = "19.3.1";
@@ -23560,7 +23552,15 @@
     }
   });
 
+  // frontend/src/index.tsx
+  var import_react10 = __toESM(require_react());
+  var import_client = __toESM(require_client());
+
+  // frontend/src/App.tsx
+  var import_react9 = __toESM(require_react());
+
   // frontend/src/api.ts
+  var API_BASE = "/api";
   function getStoredToken() {
     return localStorage.getItem("meridian_token");
   }
@@ -23589,21 +23589,15 @@
     }
     return data;
   }
-  var API_BASE;
-  var init_api = __esm({
-    "frontend/src/api.ts"() {
-      "use strict";
-      API_BASE = "/api";
-    }
-  });
+
+  // frontend/src/components/TradingTerminal.tsx
+  var import_react4 = __toESM(require_react());
+
+  // node_modules/lucide-react/dist/esm/createLucideIcon.mjs
+  var import_react3 = __toESM(require_react(), 1);
 
   // node_modules/lucide-react/dist/esm/shared/src/utils/toKebabCase.mjs
-  var toKebabCase;
-  var init_toKebabCase = __esm({
-    "node_modules/lucide-react/dist/esm/shared/src/utils/toKebabCase.mjs"() {
-      toKebabCase = (string) => string?.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-    }
-  });
+  var toKebabCase = (string) => string?.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 
   // node_modules/lucide-react/dist/esm/shared/src/utils/toLucideIconData.mjs
   function toLucideIconData(iconName, iconNode, aliases = []) {
@@ -23617,75 +23611,52 @@
       ...aliases.length > 0 ? { aliases } : {}
     };
   }
-  var init_toLucideIconData = __esm({
-    "node_modules/lucide-react/dist/esm/shared/src/utils/toLucideIconData.mjs"() {
-      init_toKebabCase();
-    }
-  });
 
   // node_modules/lucide-react/dist/esm/shared/src/utils/toCamelCase.mjs
-  var toCamelCase;
-  var init_toCamelCase = __esm({
-    "node_modules/lucide-react/dist/esm/shared/src/utils/toCamelCase.mjs"() {
-      toCamelCase = (string) => {
-        let out = "";
-        let upperNext = false;
-        for (const ch of string) {
-          if (ch === "-" || ch === "_" || ch <= " ") {
-            upperNext = out.length > 0;
-            continue;
-          }
-          if (out.length === 0) {
-            out += ch.toLowerCase();
-          } else {
-            out += upperNext ? ch.toUpperCase() : ch;
-          }
-          upperNext = false;
-        }
-        return out;
-      };
+  var toCamelCase = (string) => {
+    let out = "";
+    let upperNext = false;
+    for (const ch of string) {
+      if (ch === "-" || ch === "_" || ch <= " ") {
+        upperNext = out.length > 0;
+        continue;
+      }
+      if (out.length === 0) {
+        out += ch.toLowerCase();
+      } else {
+        out += upperNext ? ch.toUpperCase() : ch;
+      }
+      upperNext = false;
     }
-  });
+    return out;
+  };
 
   // node_modules/lucide-react/dist/esm/shared/src/utils/toPascalCase.mjs
-  var toPascalCase;
-  var init_toPascalCase = __esm({
-    "node_modules/lucide-react/dist/esm/shared/src/utils/toPascalCase.mjs"() {
-      init_toCamelCase();
-      toPascalCase = (string) => {
-        const camelCase = toCamelCase(string);
-        return camelCase.charAt(0).toUpperCase() + camelCase.slice(1);
-      };
-    }
-  });
+  var toPascalCase = (string) => {
+    const camelCase = toCamelCase(string);
+    return camelCase.charAt(0).toUpperCase() + camelCase.slice(1);
+  };
+
+  // node_modules/lucide-react/dist/esm/Icon.mjs
+  var import_react2 = __toESM(require_react(), 1);
 
   // node_modules/lucide-react/dist/esm/shared/src/utils/mergeClasses.mjs
-  var mergeClasses;
-  var init_mergeClasses = __esm({
-    "node_modules/lucide-react/dist/esm/shared/src/utils/mergeClasses.mjs"() {
-      mergeClasses = (...classes) => classes.filter((className, index, array) => {
-        return Boolean(className) && className.trim() !== "" && array.indexOf(className) === index;
-      }).join(" ").trim();
-    }
-  });
+  var mergeClasses = (...classes) => classes.filter((className, index, array) => {
+    return Boolean(className) && className.trim() !== "" && array.indexOf(className) === index;
+  }).join(" ").trim();
 
   // node_modules/lucide-react/dist/esm/shared/src/build/defaultAttributes.mjs
-  var defaultAttributes;
-  var init_defaultAttributes = __esm({
-    "node_modules/lucide-react/dist/esm/shared/src/build/defaultAttributes.mjs"() {
-      defaultAttributes = {
-        xmlns: "http://www.w3.org/2000/svg",
-        width: 24,
-        height: 24,
-        viewBox: "0 0 24 24",
-        fill: "none",
-        stroke: "currentColor",
-        "stroke-width": 2,
-        "stroke-linecap": "round",
-        "stroke-linejoin": "round"
-      };
-    }
-  });
+  var defaultAttributes = {
+    xmlns: "http://www.w3.org/2000/svg",
+    width: 24,
+    height: 24,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    "stroke-width": 2,
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round"
+  };
 
   // node_modules/lucide-react/dist/esm/shared/src/build/buildLucideIconNode.mjs
   function isDefined(value) {
@@ -23739,12 +23710,6 @@
       })
     ];
   }
-  var init_buildLucideIconNode = __esm({
-    "node_modules/lucide-react/dist/esm/shared/src/build/buildLucideIconNode.mjs"() {
-      init_defaultAttributes();
-      init_mergeClasses();
-    }
-  });
 
   // node_modules/lucide-react/dist/esm/shared/src/build/buildLucideIconForReact.mjs
   function buildLucideIconForReact(icon, params = {}) {
@@ -23760,104 +23725,75 @@
       }
     });
   }
-  var init_buildLucideIconForReact = __esm({
-    "node_modules/lucide-react/dist/esm/shared/src/build/buildLucideIconForReact.mjs"() {
-      init_buildLucideIconNode();
-    }
-  });
 
   // node_modules/lucide-react/dist/esm/shared/src/utils/hasA11yProp.mjs
-  var hasA11yProp;
-  var init_hasA11yProp = __esm({
-    "node_modules/lucide-react/dist/esm/shared/src/utils/hasA11yProp.mjs"() {
-      hasA11yProp = (props) => {
-        for (const prop in props) {
-          if (prop.startsWith("aria-") || prop === "role" || prop === "title") {
-            return true;
-          }
-        }
-        return false;
-      };
+  var hasA11yProp = (props) => {
+    for (const prop in props) {
+      if (prop.startsWith("aria-") || prop === "role" || prop === "title") {
+        return true;
+      }
     }
-  });
+    return false;
+  };
 
   // node_modules/lucide-react/dist/esm/context.mjs
-  var import_react, LucideContext, useLucideContext;
-  var init_context = __esm({
-    "node_modules/lucide-react/dist/esm/context.mjs"() {
-      "use strict";
-      "use client";
-      import_react = __toESM(require_react(), 1);
-      LucideContext = (0, import_react.createContext)({});
-      useLucideContext = () => (0, import_react.useContext)(LucideContext);
-    }
-  });
+  var import_react = __toESM(require_react(), 1);
+  var LucideContext = (0, import_react.createContext)({});
+  var useLucideContext = () => (0, import_react.useContext)(LucideContext);
 
   // node_modules/lucide-react/dist/esm/Icon.mjs
-  var import_react2, Icon;
-  var init_Icon = __esm({
-    "node_modules/lucide-react/dist/esm/Icon.mjs"() {
-      "use strict";
-      "use client";
-      import_react2 = __toESM(require_react(), 1);
-      init_mergeClasses();
-      init_buildLucideIconForReact();
-      init_hasA11yProp();
-      init_context();
-      Icon = (0, import_react2.forwardRef)(
-        ({
-          color,
-          size,
-          width,
-          height,
-          strokeWidth,
-          absoluteStrokeWidth,
-          nonScalingStroke,
-          className = "",
-          children,
-          iconNode = [],
-          icon = {
-            node: iconNode,
-            aliases: [],
-            size: 24
-          },
-          ...rest
-        }, ref) => {
-          const {
-            size: contextSize = 24,
-            strokeWidth: contextStrokeWidth = 2,
-            absoluteStrokeWidth: contextAbsoluteStrokeWidth = false,
-            nonScalingStroke: contextNonScalingStroke = false,
-            color: contextColor = "currentColor",
-            className: contextClass = ""
-          } = useLucideContext() ?? {};
-          const hasAccessibleProp = Boolean(children) || hasA11yProp(rest);
-          const [name, svgAttributes, builtIconNode = []] = buildLucideIconForReact(icon, {
-            color: color ?? contextColor,
-            width: width ?? size ?? contextSize,
-            height: height ?? size ?? contextSize,
-            strokeWidth: strokeWidth ?? contextStrokeWidth,
-            absoluteStrokeWidth: absoluteStrokeWidth ?? contextAbsoluteStrokeWidth,
-            nonScalingStroke: nonScalingStroke ?? contextNonScalingStroke,
-            className: mergeClasses(contextClass, className),
-            hasA11yProp: hasAccessibleProp,
-            attributes: rest
-          });
-          return (0, import_react2.createElement)(
-            name,
-            {
-              ref,
-              ...svgAttributes
-            },
-            [
-              ...builtIconNode.map(([tag, attrs]) => (0, import_react2.createElement)(tag, attrs)),
-              ...Array.isArray(children) ? children : [children]
-            ]
-          );
-        }
+  var Icon = (0, import_react2.forwardRef)(
+    ({
+      color,
+      size,
+      width,
+      height,
+      strokeWidth,
+      absoluteStrokeWidth,
+      nonScalingStroke,
+      className = "",
+      children,
+      iconNode = [],
+      icon = {
+        node: iconNode,
+        aliases: [],
+        size: 24
+      },
+      ...rest
+    }, ref) => {
+      const {
+        size: contextSize = 24,
+        strokeWidth: contextStrokeWidth = 2,
+        absoluteStrokeWidth: contextAbsoluteStrokeWidth = false,
+        nonScalingStroke: contextNonScalingStroke = false,
+        color: contextColor = "currentColor",
+        className: contextClass = ""
+      } = useLucideContext() ?? {};
+      const hasAccessibleProp = Boolean(children) || hasA11yProp(rest);
+      const [name, svgAttributes, builtIconNode = []] = buildLucideIconForReact(icon, {
+        color: color ?? contextColor,
+        width: width ?? size ?? contextSize,
+        height: height ?? size ?? contextSize,
+        strokeWidth: strokeWidth ?? contextStrokeWidth,
+        absoluteStrokeWidth: absoluteStrokeWidth ?? contextAbsoluteStrokeWidth,
+        nonScalingStroke: nonScalingStroke ?? contextNonScalingStroke,
+        className: mergeClasses(contextClass, className),
+        hasA11yProp: hasAccessibleProp,
+        attributes: rest
+      });
+      return (0, import_react2.createElement)(
+        name,
+        {
+          ref,
+          ...svgAttributes
+        },
+        [
+          ...builtIconNode.map(([tag, attrs]) => (0, import_react2.createElement)(tag, attrs)),
+          ...Array.isArray(children) ? children : [children]
+        ]
       );
     }
-  });
+  );
 
   // node_modules/lucide-react/dist/esm/createLucideIcon.mjs
   function createLucideIcon(iconDataOrName, iconNode = [], aliases = []) {
@@ -23875,484 +23811,321 @@
     }
     return Component;
   }
-  var import_react3;
-  var init_createLucideIcon = __esm({
-    "node_modules/lucide-react/dist/esm/createLucideIcon.mjs"() {
-      import_react3 = __toESM(require_react(), 1);
-      init_toLucideIconData();
-      init_toPascalCase();
-      init_Icon();
-    }
-  });
 
   // node_modules/lucide-react/dist/esm/icons/activity.mjs
-  var __iconData, Activity;
-  var init_activity = __esm({
-    "node_modules/lucide-react/dist/esm/icons/activity.mjs"() {
-      init_createLucideIcon();
-      __iconData = {
-        name: "activity",
-        size: 24,
-        node: [
-          [
-            "path",
-            {
-              d: "M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2",
-              key: "169zse"
-            }
-          ]
-        ]
-      };
-      __iconData.node;
-      Activity = createLucideIcon(__iconData);
-    }
-  });
+  var __iconData = {
+    name: "activity",
+    size: 24,
+    node: [
+      [
+        "path",
+        {
+          d: "M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2",
+          key: "169zse"
+        }
+      ]
+    ]
+  };
+  __iconData.node;
+  var Activity = createLucideIcon(__iconData);
 
   // node_modules/lucide-react/dist/esm/icons/arrow-down-right.mjs
-  var __iconData2, ArrowDownRight;
-  var init_arrow_down_right = __esm({
-    "node_modules/lucide-react/dist/esm/icons/arrow-down-right.mjs"() {
-      init_createLucideIcon();
-      __iconData2 = {
-        name: "arrow-down-right",
-        size: 24,
-        node: [
-          ["path", { d: "m7 7 10 10", key: "1fmybs" }],
-          ["path", { d: "M17 7v10H7", key: "6fjiku" }]
-        ]
-      };
-      __iconData2.node;
-      ArrowDownRight = createLucideIcon(__iconData2);
-    }
-  });
+  var __iconData2 = {
+    name: "arrow-down-right",
+    size: 24,
+    node: [
+      ["path", { d: "m7 7 10 10", key: "1fmybs" }],
+      ["path", { d: "M17 7v10H7", key: "6fjiku" }]
+    ]
+  };
+  __iconData2.node;
+  var ArrowDownRight = createLucideIcon(__iconData2);
 
   // node_modules/lucide-react/dist/esm/icons/arrow-up-right.mjs
-  var __iconData3, ArrowUpRight;
-  var init_arrow_up_right = __esm({
-    "node_modules/lucide-react/dist/esm/icons/arrow-up-right.mjs"() {
-      init_createLucideIcon();
-      __iconData3 = {
-        name: "arrow-up-right",
-        size: 24,
-        node: [
-          ["path", { d: "M7 7h10v10", key: "1tivn9" }],
-          ["path", { d: "M7 17 17 7", key: "1vkiza" }]
-        ]
-      };
-      __iconData3.node;
-      ArrowUpRight = createLucideIcon(__iconData3);
-    }
-  });
+  var __iconData3 = {
+    name: "arrow-up-right",
+    size: 24,
+    node: [
+      ["path", { d: "M7 7h10v10", key: "1tivn9" }],
+      ["path", { d: "M7 17 17 7", key: "1vkiza" }]
+    ]
+  };
+  __iconData3.node;
+  var ArrowUpRight = createLucideIcon(__iconData3);
 
   // node_modules/lucide-react/dist/esm/icons/book-open.mjs
-  var __iconData4, BookOpen;
-  var init_book_open = __esm({
-    "node_modules/lucide-react/dist/esm/icons/book-open.mjs"() {
-      init_createLucideIcon();
-      __iconData4 = {
-        name: "book-open",
-        size: 24,
-        node: [
-          ["path", { d: "M12 5v16", key: "1f6ucr" }],
-          [
-            "path",
-            {
-              d: "M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z",
-              key: "1fyvmf"
-            }
-          ]
-        ]
-      };
-      __iconData4.node;
-      BookOpen = createLucideIcon(__iconData4);
-    }
-  });
+  var __iconData4 = {
+    name: "book-open",
+    size: 24,
+    node: [
+      ["path", { d: "M12 5v16", key: "1f6ucr" }],
+      [
+        "path",
+        {
+          d: "M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z",
+          key: "1fyvmf"
+        }
+      ]
+    ]
+  };
+  __iconData4.node;
+  var BookOpen = createLucideIcon(__iconData4);
 
   // node_modules/lucide-react/dist/esm/icons/chevron-right.mjs
-  var __iconData5, ChevronRight;
-  var init_chevron_right = __esm({
-    "node_modules/lucide-react/dist/esm/icons/chevron-right.mjs"() {
-      init_createLucideIcon();
-      __iconData5 = {
-        name: "chevron-right",
-        size: 24,
-        node: [["path", { d: "m9 18 6-6-6-6", key: "mthhwq" }]]
-      };
-      __iconData5.node;
-      ChevronRight = createLucideIcon(__iconData5);
-    }
-  });
+  var __iconData5 = {
+    name: "chevron-right",
+    size: 24,
+    node: [["path", { d: "m9 18 6-6-6-6", key: "mthhwq" }]]
+  };
+  __iconData5.node;
+  var ChevronRight = createLucideIcon(__iconData5);
 
   // node_modules/lucide-react/dist/esm/icons/circle-check.mjs
-  var __iconData6, CircleCheck;
-  var init_circle_check = __esm({
-    "node_modules/lucide-react/dist/esm/icons/circle-check.mjs"() {
-      init_createLucideIcon();
-      __iconData6 = {
-        name: "circle-check",
-        size: 24,
-        node: [
-          ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
-          ["path", { d: "m16 9-5.5 5.5L8 12", key: "xofnsj" }]
-        ],
-        aliases: ["check-circle-2"]
-      };
-      __iconData6.node;
-      CircleCheck = createLucideIcon(__iconData6);
-    }
-  });
+  var __iconData6 = {
+    name: "circle-check",
+    size: 24,
+    node: [
+      ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
+      ["path", { d: "m16 9-5.5 5.5L8 12", key: "xofnsj" }]
+    ],
+    aliases: ["check-circle-2"]
+  };
+  __iconData6.node;
+  var CircleCheck = createLucideIcon(__iconData6);
 
   // node_modules/lucide-react/dist/esm/icons/cpu.mjs
-  var __iconData7, Cpu;
-  var init_cpu = __esm({
-    "node_modules/lucide-react/dist/esm/icons/cpu.mjs"() {
-      init_createLucideIcon();
-      __iconData7 = {
-        name: "cpu",
-        size: 24,
-        node: [
-          ["path", { d: "M12 20v2", key: "1lh1kg" }],
-          ["path", { d: "M12 2v2", key: "tus03m" }],
-          ["path", { d: "M17 20v2", key: "1rnc9c" }],
-          ["path", { d: "M17 2v2", key: "11trls" }],
-          ["path", { d: "M2 12h2", key: "1t8f8n" }],
-          ["path", { d: "M2 17h2", key: "7oei6x" }],
-          ["path", { d: "M2 7h2", key: "asdhe0" }],
-          ["path", { d: "M20 12h2", key: "1q8mjw" }],
-          ["path", { d: "M20 17h2", key: "1fpfkl" }],
-          ["path", { d: "M20 7h2", key: "1o8tra" }],
-          ["path", { d: "M7 20v2", key: "4gnj0m" }],
-          ["path", { d: "M7 2v2", key: "1i4yhu" }],
-          ["rect", { x: "4", y: "4", width: "16", height: "16", rx: "2", key: "1vbyd7" }],
-          ["rect", { x: "8", y: "8", width: "8", height: "8", rx: "1", key: "z9xiuo" }]
-        ]
-      };
-      __iconData7.node;
-      Cpu = createLucideIcon(__iconData7);
-    }
-  });
+  var __iconData7 = {
+    name: "cpu",
+    size: 24,
+    node: [
+      ["path", { d: "M12 20v2", key: "1lh1kg" }],
+      ["path", { d: "M12 2v2", key: "tus03m" }],
+      ["path", { d: "M17 20v2", key: "1rnc9c" }],
+      ["path", { d: "M17 2v2", key: "11trls" }],
+      ["path", { d: "M2 12h2", key: "1t8f8n" }],
+      ["path", { d: "M2 17h2", key: "7oei6x" }],
+      ["path", { d: "M2 7h2", key: "asdhe0" }],
+      ["path", { d: "M20 12h2", key: "1q8mjw" }],
+      ["path", { d: "M20 17h2", key: "1fpfkl" }],
+      ["path", { d: "M20 7h2", key: "1o8tra" }],
+      ["path", { d: "M7 20v2", key: "4gnj0m" }],
+      ["path", { d: "M7 2v2", key: "1i4yhu" }],
+      ["rect", { x: "4", y: "4", width: "16", height: "16", rx: "2", key: "1vbyd7" }],
+      ["rect", { x: "8", y: "8", width: "8", height: "8", rx: "1", key: "z9xiuo" }]
+    ]
+  };
+  __iconData7.node;
+  var Cpu = createLucideIcon(__iconData7);
 
   // node_modules/lucide-react/dist/esm/icons/database.mjs
-  var __iconData8, Database;
-  var init_database = __esm({
-    "node_modules/lucide-react/dist/esm/icons/database.mjs"() {
-      init_createLucideIcon();
-      __iconData8 = {
-        name: "database",
-        size: 24,
-        node: [
-          ["ellipse", { cx: "12", cy: "5", rx: "9", ry: "3", key: "msslwz" }],
-          ["path", { d: "M3 5V19A9 3 0 0 0 21 19V5", key: "1wlel7" }],
-          ["path", { d: "M3 12A9 3 0 0 0 21 12", key: "mv7ke4" }]
-        ]
-      };
-      __iconData8.node;
-      Database = createLucideIcon(__iconData8);
-    }
-  });
+  var __iconData8 = {
+    name: "database",
+    size: 24,
+    node: [
+      ["ellipse", { cx: "12", cy: "5", rx: "9", ry: "3", key: "msslwz" }],
+      ["path", { d: "M3 5V19A9 3 0 0 0 21 19V5", key: "1wlel7" }],
+      ["path", { d: "M3 12A9 3 0 0 0 21 12", key: "mv7ke4" }]
+    ]
+  };
+  __iconData8.node;
+  var Database = createLucideIcon(__iconData8);
 
   // node_modules/lucide-react/dist/esm/icons/log-out.mjs
-  var __iconData9, LogOut;
-  var init_log_out = __esm({
-    "node_modules/lucide-react/dist/esm/icons/log-out.mjs"() {
-      init_createLucideIcon();
-      __iconData9 = {
-        name: "log-out",
-        size: 24,
-        node: [
-          ["path", { d: "m16 17 5-5-5-5", key: "1bji2h" }],
-          ["path", { d: "M21 12H9", key: "dn1m92" }],
-          ["path", { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", key: "1uf3rs" }]
-        ]
-      };
-      __iconData9.node;
-      LogOut = createLucideIcon(__iconData9);
-    }
-  });
+  var __iconData9 = {
+    name: "log-out",
+    size: 24,
+    node: [
+      ["path", { d: "m16 17 5-5-5-5", key: "1bji2h" }],
+      ["path", { d: "M21 12H9", key: "dn1m92" }],
+      ["path", { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", key: "1uf3rs" }]
+    ]
+  };
+  __iconData9.node;
+  var LogOut = createLucideIcon(__iconData9);
 
   // node_modules/lucide-react/dist/esm/icons/play.mjs
-  var __iconData10, Play;
-  var init_play = __esm({
-    "node_modules/lucide-react/dist/esm/icons/play.mjs"() {
-      init_createLucideIcon();
-      __iconData10 = {
-        name: "play",
-        size: 24,
-        node: [
-          [
-            "path",
-            {
-              d: "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z",
-              key: "10ikf1"
-            }
-          ]
-        ]
-      };
-      __iconData10.node;
-      Play = createLucideIcon(__iconData10);
-    }
-  });
+  var __iconData10 = {
+    name: "play",
+    size: 24,
+    node: [
+      [
+        "path",
+        {
+          d: "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z",
+          key: "10ikf1"
+        }
+      ]
+    ]
+  };
+  __iconData10.node;
+  var Play = createLucideIcon(__iconData10);
 
   // node_modules/lucide-react/dist/esm/icons/radio.mjs
-  var __iconData11, Radio;
-  var init_radio = __esm({
-    "node_modules/lucide-react/dist/esm/icons/radio.mjs"() {
-      init_createLucideIcon();
-      __iconData11 = {
-        name: "radio",
-        size: 24,
-        node: [
-          ["path", { d: "M16.247 7.761a6 6 0 0 1 0 8.478", key: "1fwjs5" }],
-          ["path", { d: "M19.075 4.933a10 10 0 0 1 0 14.134", key: "ehdyv1" }],
-          ["path", { d: "M4.925 19.067a10 10 0 0 1 0-14.134", key: "1q22gi" }],
-          ["path", { d: "M7.753 16.239a6 6 0 0 1 0-8.478", key: "r2q7qm" }],
-          ["circle", { cx: "12", cy: "12", r: "2", key: "1c9p78" }]
-        ]
-      };
-      __iconData11.node;
-      Radio = createLucideIcon(__iconData11);
-    }
-  });
+  var __iconData11 = {
+    name: "radio",
+    size: 24,
+    node: [
+      ["path", { d: "M16.247 7.761a6 6 0 0 1 0 8.478", key: "1fwjs5" }],
+      ["path", { d: "M19.075 4.933a10 10 0 0 1 0 14.134", key: "ehdyv1" }],
+      ["path", { d: "M4.925 19.067a10 10 0 0 1 0-14.134", key: "1q22gi" }],
+      ["path", { d: "M7.753 16.239a6 6 0 0 1 0-8.478", key: "r2q7qm" }],
+      ["circle", { cx: "12", cy: "12", r: "2", key: "1c9p78" }]
+    ]
+  };
+  __iconData11.node;
+  var Radio = createLucideIcon(__iconData11);
 
   // node_modules/lucide-react/dist/esm/icons/refresh-cw.mjs
-  var __iconData12, RefreshCw;
-  var init_refresh_cw = __esm({
-    "node_modules/lucide-react/dist/esm/icons/refresh-cw.mjs"() {
-      init_createLucideIcon();
-      __iconData12 = {
-        name: "refresh-cw",
-        size: 24,
-        node: [
-          ["path", { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8", key: "v9h5vc" }],
-          ["path", { d: "M21 3v5h-5", key: "1q7to0" }],
-          ["path", { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16", key: "3uifl3" }],
-          ["path", { d: "M8 16H3v5", key: "1cv678" }]
-        ]
-      };
-      __iconData12.node;
-      RefreshCw = createLucideIcon(__iconData12);
-    }
-  });
+  var __iconData12 = {
+    name: "refresh-cw",
+    size: 24,
+    node: [
+      ["path", { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8", key: "v9h5vc" }],
+      ["path", { d: "M21 3v5h-5", key: "1q7to0" }],
+      ["path", { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16", key: "3uifl3" }],
+      ["path", { d: "M8 16H3v5", key: "1cv678" }]
+    ]
+  };
+  __iconData12.node;
+  var RefreshCw = createLucideIcon(__iconData12);
 
   // node_modules/lucide-react/dist/esm/icons/rotate-ccw-clock.mjs
-  var __iconData13, RotateCcwClock;
-  var init_rotate_ccw_clock = __esm({
-    "node_modules/lucide-react/dist/esm/icons/rotate-ccw-clock.mjs"() {
-      init_createLucideIcon();
-      __iconData13 = {
-        name: "rotate-ccw-clock",
-        size: 24,
-        node: [
-          ["path", { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", key: "1357e3" }],
-          ["path", { d: "M3 3v5h5", key: "1xhq8a" }],
-          ["path", { d: "M12 7v5l4 2", key: "1fdv2h" }]
-        ],
-        aliases: ["history"]
-      };
-      __iconData13.node;
-      RotateCcwClock = createLucideIcon(__iconData13);
-    }
-  });
+  var __iconData13 = {
+    name: "rotate-ccw-clock",
+    size: 24,
+    node: [
+      ["path", { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", key: "1357e3" }],
+      ["path", { d: "M3 3v5h5", key: "1xhq8a" }],
+      ["path", { d: "M12 7v5l4 2", key: "1fdv2h" }]
+    ],
+    aliases: ["history"]
+  };
+  __iconData13.node;
+  var RotateCcwClock = createLucideIcon(__iconData13);
 
   // node_modules/lucide-react/dist/esm/icons/search.mjs
-  var __iconData14, Search;
-  var init_search = __esm({
-    "node_modules/lucide-react/dist/esm/icons/search.mjs"() {
-      init_createLucideIcon();
-      __iconData14 = {
-        name: "search",
-        size: 24,
-        node: [
-          ["path", { d: "m21 21-4.34-4.34", key: "14j7rj" }],
-          ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }]
-        ]
-      };
-      __iconData14.node;
-      Search = createLucideIcon(__iconData14);
-    }
-  });
+  var __iconData14 = {
+    name: "search",
+    size: 24,
+    node: [
+      ["path", { d: "m21 21-4.34-4.34", key: "14j7rj" }],
+      ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }]
+    ]
+  };
+  __iconData14.node;
+  var Search = createLucideIcon(__iconData14);
 
   // node_modules/lucide-react/dist/esm/icons/send.mjs
-  var __iconData15, Send;
-  var init_send = __esm({
-    "node_modules/lucide-react/dist/esm/icons/send.mjs"() {
-      init_createLucideIcon();
-      __iconData15 = {
-        name: "send",
-        size: 24,
-        node: [
-          [
-            "path",
-            {
-              d: "M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z",
-              key: "1ffxy3"
-            }
-          ],
-          ["path", { d: "m21.854 2.147-10.94 10.939", key: "12cjpa" }]
-        ]
-      };
-      __iconData15.node;
-      Send = createLucideIcon(__iconData15);
-    }
-  });
+  var __iconData15 = {
+    name: "send",
+    size: 24,
+    node: [
+      [
+        "path",
+        {
+          d: "M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z",
+          key: "1ffxy3"
+        }
+      ],
+      ["path", { d: "m21.854 2.147-10.94 10.939", key: "12cjpa" }]
+    ]
+  };
+  __iconData15.node;
+  var Send = createLucideIcon(__iconData15);
 
   // node_modules/lucide-react/dist/esm/icons/shield-exclamation-point.mjs
-  var __iconData16, ShieldExclamationPoint;
-  var init_shield_exclamation_point = __esm({
-    "node_modules/lucide-react/dist/esm/icons/shield-exclamation-point.mjs"() {
-      init_createLucideIcon();
-      __iconData16 = {
-        name: "shield-exclamation-point",
-        size: 24,
-        node: [
-          [
-            "path",
-            {
-              d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
-              key: "oel41y"
-            }
-          ],
-          ["path", { d: "M12 8v4", key: "1got3b" }],
-          ["path", { d: "M12 16h.01", key: "1drbdi" }]
-        ],
-        aliases: ["shield-alert"]
-      };
-      __iconData16.node;
-      ShieldExclamationPoint = createLucideIcon(__iconData16);
-    }
-  });
+  var __iconData16 = {
+    name: "shield-exclamation-point",
+    size: 24,
+    node: [
+      [
+        "path",
+        {
+          d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
+          key: "oel41y"
+        }
+      ],
+      ["path", { d: "M12 8v4", key: "1got3b" }],
+      ["path", { d: "M12 16h.01", key: "1drbdi" }]
+    ],
+    aliases: ["shield-alert"]
+  };
+  __iconData16.node;
+  var ShieldExclamationPoint = createLucideIcon(__iconData16);
 
   // node_modules/lucide-react/dist/esm/icons/shield.mjs
-  var __iconData17, Shield;
-  var init_shield = __esm({
-    "node_modules/lucide-react/dist/esm/icons/shield.mjs"() {
-      init_createLucideIcon();
-      __iconData17 = {
-        name: "shield",
-        size: 24,
-        node: [
-          [
-            "path",
-            {
-              d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
-              key: "oel41y"
-            }
-          ]
-        ]
-      };
-      __iconData17.node;
-      Shield = createLucideIcon(__iconData17);
-    }
-  });
+  var __iconData17 = {
+    name: "shield",
+    size: 24,
+    node: [
+      [
+        "path",
+        {
+          d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
+          key: "oel41y"
+        }
+      ]
+    ]
+  };
+  __iconData17.node;
+  var Shield = createLucideIcon(__iconData17);
 
   // node_modules/lucide-react/dist/esm/icons/trending-up.mjs
-  var __iconData18, TrendingUp;
-  var init_trending_up = __esm({
-    "node_modules/lucide-react/dist/esm/icons/trending-up.mjs"() {
-      init_createLucideIcon();
-      __iconData18 = {
-        name: "trending-up",
-        size: 24,
-        node: [
-          ["path", { d: "M16 7h6v6", key: "box55l" }],
-          ["path", { d: "m22 7-8.5 8.5-5-5L2 17", key: "1t1m79" }]
-        ]
-      };
-      __iconData18.node;
-      TrendingUp = createLucideIcon(__iconData18);
-    }
-  });
+  var __iconData18 = {
+    name: "trending-up",
+    size: 24,
+    node: [
+      ["path", { d: "M16 7h6v6", key: "box55l" }],
+      ["path", { d: "m22 7-8.5 8.5-5-5L2 17", key: "1t1m79" }]
+    ]
+  };
+  __iconData18.node;
+  var TrendingUp = createLucideIcon(__iconData18);
 
   // node_modules/lucide-react/dist/esm/icons/triangle-exclamation-point.mjs
-  var __iconData19, TriangleExclamationPoint;
-  var init_triangle_exclamation_point = __esm({
-    "node_modules/lucide-react/dist/esm/icons/triangle-exclamation-point.mjs"() {
-      init_createLucideIcon();
-      __iconData19 = {
-        name: "triangle-exclamation-point",
-        size: 24,
-        node: [
-          [
-            "path",
-            {
-              d: "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3",
-              key: "wmoenq"
-            }
-          ],
-          ["path", { d: "M12 9v4", key: "juzpu7" }],
-          ["path", { d: "M12 17h.01", key: "p32p05" }]
-        ],
-        aliases: ["alert-triangle", "triangle-alert"]
-      };
-      __iconData19.node;
-      TriangleExclamationPoint = createLucideIcon(__iconData19);
-    }
-  });
+  var __iconData19 = {
+    name: "triangle-exclamation-point",
+    size: 24,
+    node: [
+      [
+        "path",
+        {
+          d: "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3",
+          key: "wmoenq"
+        }
+      ],
+      ["path", { d: "M12 9v4", key: "juzpu7" }],
+      ["path", { d: "M12 17h.01", key: "p32p05" }]
+    ],
+    aliases: ["alert-triangle", "triangle-alert"]
+  };
+  __iconData19.node;
+  var TriangleExclamationPoint = createLucideIcon(__iconData19);
 
   // node_modules/lucide-react/dist/esm/icons/user-check.mjs
-  var __iconData20, UserCheck;
-  var init_user_check = __esm({
-    "node_modules/lucide-react/dist/esm/icons/user-check.mjs"() {
-      init_createLucideIcon();
-      __iconData20 = {
-        name: "user-check",
-        size: 24,
-        node: [
-          ["path", { d: "m16 11 2 2 4-4", key: "9rsbq5" }],
-          ["path", { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", key: "1yyitq" }],
-          ["circle", { cx: "9", cy: "7", r: "4", key: "nufk8" }]
-        ]
-      };
-      __iconData20.node;
-      UserCheck = createLucideIcon(__iconData20);
-    }
-  });
+  var __iconData20 = {
+    name: "user-check",
+    size: 24,
+    node: [
+      ["path", { d: "m16 11 2 2 4-4", key: "9rsbq5" }],
+      ["path", { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", key: "1yyitq" }],
+      ["circle", { cx: "9", cy: "7", r: "4", key: "nufk8" }]
+    ]
+  };
+  __iconData20.node;
+  var UserCheck = createLucideIcon(__iconData20);
 
   // node_modules/lucide-react/dist/esm/icons/x.mjs
-  var __iconData21, X;
-  var init_x = __esm({
-    "node_modules/lucide-react/dist/esm/icons/x.mjs"() {
-      init_createLucideIcon();
-      __iconData21 = {
-        name: "x",
-        size: 24,
-        node: [
-          ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
-          ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
-        ]
-      };
-      __iconData21.node;
-      X = createLucideIcon(__iconData21);
-    }
-  });
-
-  // node_modules/lucide-react/dist/esm/lucide-react.mjs
-  var init_lucide_react = __esm({
-    "node_modules/lucide-react/dist/esm/lucide-react.mjs"() {
-      "use strict";
-      init_circle_check();
-      init_rotate_ccw_clock();
-      init_shield_exclamation_point();
-      init_triangle_exclamation_point();
-      init_activity();
-      init_arrow_down_right();
-      init_arrow_up_right();
-      init_book_open();
-      init_chevron_right();
-      init_cpu();
-      init_database();
-      init_log_out();
-      init_play();
-      init_radio();
-      init_refresh_cw();
-      init_search();
-      init_send();
-      init_shield();
-      init_trending_up();
-      init_user_check();
-      init_x();
-    }
-  });
+  var __iconData21 = {
+    name: "x",
+    size: 24,
+    node: [
+      ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
+      ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
+    ]
+  };
+  __iconData21.node;
+  var X = createLucideIcon(__iconData21);
 
   // frontend/src/components/TradingTerminal.tsx
   function TradingTerminal({ user }) {
@@ -24661,17 +24434,9 @@
       return /* @__PURE__ */ import_react4.default.createElement("tr", { key: idx, className: "hover:bg-slate-800/40" }, /* @__PURE__ */ import_react4.default.createElement("td", { className: "py-2 font-bold text-white" }, p.symbol), /* @__PURE__ */ import_react4.default.createElement("td", { className: "py-2 font-semibold" }, /* @__PURE__ */ import_react4.default.createElement("span", { className: parseInt(p.net_qty, 10) >= 0 ? "text-emerald-400" : "text-rose-400" }, p.net_qty)), /* @__PURE__ */ import_react4.default.createElement("td", { className: "py-2 text-slate-300" }, "\u20B9", parseFloat(p.avg_cost).toFixed(2)), /* @__PURE__ */ import_react4.default.createElement("td", { className: "py-2 text-slate-200" }, "\u20B9", parseFloat(p.current_market_price).toFixed(2)), /* @__PURE__ */ import_react4.default.createElement("td", { className: "py-2 text-slate-200" }, "\u20B9", parseFloat(p.market_value).toLocaleString("en-IN", { minimumFractionDigits: 2 })), /* @__PURE__ */ import_react4.default.createElement("td", { className: `py-2 font-bold ${unPnl >= 0 ? "text-emerald-400" : "text-rose-400"}` }, unPnl >= 0 ? "+" : "", "\u20B9", unPnl.toFixed(2)), /* @__PURE__ */ import_react4.default.createElement("td", { className: `py-2 font-bold ${rPnl >= 0 ? "text-emerald-400" : "text-rose-400"}` }, rPnl >= 0 ? "+" : "", "\u20B9", rPnl.toFixed(2)));
     }), positions.length === 0 && /* @__PURE__ */ import_react4.default.createElement("tr", null, /* @__PURE__ */ import_react4.default.createElement("td", { colSpan: 7, className: "py-8 text-center text-slate-500" }, "No open positions. Execute trades to build your portfolio!"))))))));
   }
-  var import_react4;
-  var init_TradingTerminal = __esm({
-    "frontend/src/components/TradingTerminal.tsx"() {
-      "use strict";
-      import_react4 = __toESM(require_react());
-      init_api();
-      init_lucide_react();
-    }
-  });
 
   // frontend/src/components/SurveillanceConsole.tsx
+  var import_react5 = __toESM(require_react());
   function SurveillanceConsole({ user }) {
     const [alerts, setAlerts] = (0, import_react5.useState)([]);
     const [patterns, setPatterns] = (0, import_react5.useState)([]);
@@ -24891,17 +24656,9 @@
       /* @__PURE__ */ import_react5.default.createElement("span", null, "Save")
     )))) : /* @__PURE__ */ import_react5.default.createElement("div", { className: "flex-1 flex flex-col items-center justify-center text-slate-500 py-16 text-center space-y-2" }, /* @__PURE__ */ import_react5.default.createElement(ShieldExclamationPoint, { className: "w-8 h-8 text-slate-600" }), /* @__PURE__ */ import_react5.default.createElement("p", { className: "text-xs" }, "Select any alert from the queue to view its 8-D behavioral features, inspect cosine similarity, and append investigation notes.")))));
   }
-  var import_react5;
-  var init_SurveillanceConsole = __esm({
-    "frontend/src/components/SurveillanceConsole.tsx"() {
-      "use strict";
-      import_react5 = __toESM(require_react());
-      init_api();
-      init_lucide_react();
-    }
-  });
 
   // frontend/src/components/SystemAudit.tsx
+  var import_react6 = __toESM(require_react());
   function SystemAudit() {
     const [auditLogs, setAuditLogs] = (0, import_react6.useState)([]);
     const [offsets, setOffsets] = (0, import_react6.useState)([]);
@@ -24942,17 +24699,9 @@
       /* @__PURE__ */ import_react6.default.createElement(RefreshCw, { className: "w-3.5 h-3.5" })
     ))), /* @__PURE__ */ import_react6.default.createElement("div", { className: "overflow-x-auto font-mono text-xs" }, /* @__PURE__ */ import_react6.default.createElement("table", { className: "w-full text-left" }, /* @__PURE__ */ import_react6.default.createElement("thead", { className: "text-[10px] text-slate-500 uppercase border-b border-slate-800 pb-1" }, /* @__PURE__ */ import_react6.default.createElement("tr", null, /* @__PURE__ */ import_react6.default.createElement("th", { className: "py-2" }, "Audit ID"), /* @__PURE__ */ import_react6.default.createElement("th", { className: "py-2" }, "Timestamp"), /* @__PURE__ */ import_react6.default.createElement("th", { className: "py-2" }, "Actor"), /* @__PURE__ */ import_react6.default.createElement("th", { className: "py-2" }, "Action"), /* @__PURE__ */ import_react6.default.createElement("th", { className: "py-2" }, "Entity"), /* @__PURE__ */ import_react6.default.createElement("th", { className: "py-2" }, "State Delta (Old vs New JSON)"))), /* @__PURE__ */ import_react6.default.createElement("tbody", { className: "divide-y divide-slate-800/60" }, auditLogs.map((log) => /* @__PURE__ */ import_react6.default.createElement("tr", { key: log.audit_id, className: "hover:bg-slate-800/40" }, /* @__PURE__ */ import_react6.default.createElement("td", { className: "py-2 text-slate-400 font-semibold" }, "#", log.audit_id), /* @__PURE__ */ import_react6.default.createElement("td", { className: "py-2 text-slate-500 text-[10px]" }, new Date(log.occurred_at).toLocaleTimeString()), /* @__PURE__ */ import_react6.default.createElement("td", { className: "py-2 text-slate-300 font-semibold" }, log.actor || "SYSTEM"), /* @__PURE__ */ import_react6.default.createElement("td", { className: "py-2" }, /* @__PURE__ */ import_react6.default.createElement("span", { className: "px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-blue-300 border border-slate-700" }, log.action)), /* @__PURE__ */ import_react6.default.createElement("td", { className: "py-2 text-slate-400" }, log.entity_type, " (#", log.entity_id, ")"), /* @__PURE__ */ import_react6.default.createElement("td", { className: "py-2 max-w-md truncate text-[11px] text-slate-400" }, /* @__PURE__ */ import_react6.default.createElement("span", { className: "text-rose-400/80" }, log.old_data ? JSON.stringify(log.old_data) : "null"), " -> ", /* @__PURE__ */ import_react6.default.createElement("span", { className: "text-emerald-400/80" }, log.new_data ? JSON.stringify(log.new_data) : "null")))), auditLogs.length === 0 && /* @__PURE__ */ import_react6.default.createElement("tr", null, /* @__PURE__ */ import_react6.default.createElement("td", { colSpan: 6, className: "py-8 text-center text-slate-500" }, "No audit records match the filter.")))))));
   }
-  var import_react6;
-  var init_SystemAudit = __esm({
-    "frontend/src/components/SystemAudit.tsx"() {
-      "use strict";
-      import_react6 = __toESM(require_react());
-      init_api();
-      init_lucide_react();
-    }
-  });
 
   // frontend/src/components/CollegeShowcase.tsx
+  var import_react7 = __toESM(require_react());
   function CollegeShowcase() {
     const [selectedQueryId, setSelectedQueryId] = (0, import_react7.useState)(1);
     const [queryData, setQueryData] = (0, import_react7.useState)(null);
@@ -25023,17 +24772,9 @@
       { page: 6, title: "Alert Notes & Systems", desc: "ALERT_NOTES full-text search, AUDIT_LOG transaction ledger, and ENGINE_OFFSETS" }
     ].map((item) => /* @__PURE__ */ import_react7.default.createElement("div", { key: item.page, className: "p-3.5 bg-slate-950 border border-slate-800 rounded-lg" }, /* @__PURE__ */ import_react7.default.createElement("span", { className: "text-[10px] font-mono font-bold text-indigo-400 uppercase" }, "Page ", item.page, " of 7"), /* @__PURE__ */ import_react7.default.createElement("h4", { className: "font-semibold text-white text-sm mt-0.5" }, item.title), /* @__PURE__ */ import_react7.default.createElement("p", { className: "text-xs text-slate-400 mt-1" }, item.desc)))), /* @__PURE__ */ import_react7.default.createElement("div", { className: "p-3 bg-indigo-950/40 border border-indigo-800/80 rounded-lg text-xs text-indigo-300" }, /* @__PURE__ */ import_react7.default.createElement("strong", null, "Verified Chen Submission Document:"), " PDF diagram pack available at", " ", /* @__PURE__ */ import_react7.default.createElement("code", { className: "bg-slate-950 px-1 py-0.5 rounded text-white" }, "docs/college/MERIDIAN_ER_Diagram_Chen_Notation.pdf"), ".")), activeSubTab === "SCHEMA_DICTIONARY" && /* @__PURE__ */ import_react7.default.createElement("div", { className: "bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4" }, /* @__PURE__ */ import_react7.default.createElement("div", { className: "border-b border-slate-800 pb-3" }, /* @__PURE__ */ import_react7.default.createElement("h3", { className: "font-bold text-white text-base" }, "Relational Schema & BCNF Normalization Proofs"), /* @__PURE__ */ import_react7.default.createElement("p", { className: "text-xs text-slate-400 mt-1" }, "17 tables normalized to Boyce-Codd Normal Form (BCNF), eliminating insert, update, and deletion anomalies while maintaining strict referential integrity.")), /* @__PURE__ */ import_react7.default.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono" }, /* @__PURE__ */ import_react7.default.createElement("div", { className: "p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-1" }, /* @__PURE__ */ import_react7.default.createElement("span", { className: "text-indigo-400 font-bold" }, "Domain 1: Identity & Accounts (4 tables)"), /* @__PURE__ */ import_react7.default.createElement("div", { className: "text-slate-300" }, "users, sessions, accounts, risk_limits")), /* @__PURE__ */ import_react7.default.createElement("div", { className: "p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-1" }, /* @__PURE__ */ import_react7.default.createElement("span", { className: "text-indigo-400 font-bold" }, "Domain 2: Trading & Master Data (6 tables)"), /* @__PURE__ */ import_react7.default.createElement("div", { className: "text-slate-300" }, "instruments, orders, trades, fills, positions, watchlists")), /* @__PURE__ */ import_react7.default.createElement("div", { className: "p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-1" }, /* @__PURE__ */ import_react7.default.createElement("span", { className: "text-indigo-400 font-bold" }, "Domain 3: Market Surveillance (5 tables)"), /* @__PURE__ */ import_react7.default.createElement("div", { className: "text-slate-300" }, "surveillance_sessions, surveillance_patterns, alerts, alert_notes, surveillance_feature_stats")), /* @__PURE__ */ import_react7.default.createElement("div", { className: "p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-1" }, /* @__PURE__ */ import_react7.default.createElement("span", { className: "text-indigo-400 font-bold" }, "Domain 4: System Tables (2 tables)"), /* @__PURE__ */ import_react7.default.createElement("div", { className: "text-slate-300" }, "audit_log, engine_offsets")))));
   }
-  var import_react7;
-  var init_CollegeShowcase = __esm({
-    "frontend/src/components/CollegeShowcase.tsx"() {
-      "use strict";
-      import_react7 = __toESM(require_react());
-      init_api();
-      init_lucide_react();
-    }
-  });
 
   // frontend/src/components/AuthModal.tsx
+  var import_react8 = __toESM(require_react());
   function AuthModal({
     isOpen,
     onClose,
@@ -25180,15 +24921,6 @@
       isRegister ? "Already have an account? Sign In" : "Don't have an account? Register as New Trader"
     ))));
   }
-  var import_react8;
-  var init_AuthModal = __esm({
-    "frontend/src/components/AuthModal.tsx"() {
-      "use strict";
-      import_react8 = __toESM(require_react());
-      init_api();
-      init_lucide_react();
-    }
-  });
 
   // frontend/src/App.tsx
   function App() {
@@ -25291,35 +25023,13 @@
       }
     ));
   }
-  var import_react9;
-  var init_App = __esm({
-    "frontend/src/App.tsx"() {
-      "use strict";
-      import_react9 = __toESM(require_react());
-      init_api();
-      init_TradingTerminal();
-      init_SurveillanceConsole();
-      init_SystemAudit();
-      init_CollegeShowcase();
-      init_AuthModal();
-      init_lucide_react();
-    }
-  });
 
   // frontend/src/index.tsx
-  var require_index = __commonJS({
-    "frontend/src/index.tsx"() {
-      var import_react10 = __toESM(require_react());
-      var import_client = __toESM(require_client());
-      init_App();
-      var container = document.getElementById("root");
-      if (container) {
-        const root = (0, import_client.createRoot)(container);
-        root.render(/* @__PURE__ */ import_react10.default.createElement(App, null));
-      }
-    }
-  });
-  require_index();
+  var container = document.getElementById("root");
+  if (container) {
+    const root = (0, import_client.createRoot)(container);
+    root.render(/* @__PURE__ */ import_react10.default.createElement(App, null));
+  }
 })();
 /*! Bundled license information:
 
