@@ -11,13 +11,14 @@ function getErrorMessage(err: unknown): string {
 }
 
 const PlaceOrderSchema = z.object({
-  accountId: z.number().int().positive(),
+  accountId: z.number().int().positive().optional(),
   instrumentId: z.number().int().positive(),
   side: z.enum(['BUY', 'SELL']),
   orderType: z.enum(['LIMIT', 'MARKET', 'IOC']),
   timeInForce: z.enum(['DAY', 'GTC', 'IOC', 'FOK']).optional(),
   price: z.number().nonnegative(),
-  quantity: z.number().int().positive()
+  quantity: z.number().int().positive(),
+  clientOrderId: z.string().uuid().optional()
 });
 
 // Submit Order
@@ -25,16 +26,43 @@ router.post('/', authenticate, async (req: AuthenticatedRequest, res: Response) 
   try {
     const validated = PlaceOrderSchema.parse(req.body);
 
-    // Trader security authorization: Trader can only place orders on their own account
-    if (req.user?.role === 'TRADER' && req.user.accountId !== validated.accountId) {
+    // Derive account identity securely from authenticated principal
+    let targetAccountId = req.user?.accountId;
+    if (req.user?.role === 'ADMIN' && validated.accountId) {
+      targetAccountId = validated.accountId;
+    }
+
+    if (!targetAccountId) {
+      res.status(403).json({ error: 'Forbidden: No trading account associated with authenticated user' });
+      return;
+    }
+
+    // Trader security check: Trader cannot pass a different accountId in request body
+    if (validated.accountId && validated.accountId !== targetAccountId && req.user?.role !== 'ADMIN') {
       res.status(403).json({ error: 'Forbidden: You can only place orders for your own account' });
       return;
     }
 
-    const result = await TradingService.submitOrder(validated as PlaceOrderInput);
+    const clientOrderId = validated.clientOrderId || (req.headers['idempotency-key'] as string | undefined);
+
+    const input: PlaceOrderInput = {
+      accountId: targetAccountId,
+      instrumentId: validated.instrumentId,
+      side: validated.side,
+      orderType: validated.orderType,
+      timeInForce: validated.timeInForce,
+      price: validated.price,
+      quantity: validated.quantity,
+      clientOrderId: clientOrderId
+    };
+
+    const result = await TradingService.submitOrder(input);
     res.status(201).json(result);
-  } catch (err) {
-    res.status(400).json({ error: getErrorMessage(err) || 'Order submission failed' });
+  } catch (err: unknown) {
+    const statusCode = (err && typeof err === 'object' && 'statusCode' in err && typeof (err as { statusCode: unknown }).statusCode === 'number')
+      ? (err as { statusCode: number }).statusCode
+      : 400;
+    res.status(statusCode).json({ error: getErrorMessage(err) || 'Order submission failed' });
   }
 });
 

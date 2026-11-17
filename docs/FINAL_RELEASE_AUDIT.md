@@ -213,9 +213,9 @@ Every determinant in the schema is a primary key or unique candidate key, elimin
 
 #### Q3: How does the C++ matching engine achieve 4.3+ million orders/sec?
 **Answer:**
-1. **Cache Locality:** Limit price levels are organized in a dense intrusive doubly-linked list (`PriceLevel`) indexed by `std::map` (red-black tree), providing $O(1)$ head/tail queue access and $O(\log N)$ price lookups.
-2. **Zero Dynamic Allocation on the Fast Path:** Orders are pre-allocated or pooled; pointer updates in the doubly-linked list take nanoseconds.
-3. **Lock-Free Concurrency:** Inter-thread communication uses a Single-Producer Single-Consumer (SPSC) ring buffer with `std::atomic` acquire/release memory semantics, avoiding kernel context switches and OS mutex locks.
+1. **Ordered Limit Price Levels:** Limit price levels are organized in a `std::map<Price, std::list<Order>>` (red-black tree), providing $O(1)$ best-bid/best-ask queue access and $O(\log P)$ price lookups. Within each price tier, orders are maintained in a FIFO `std::list<Order>`, providing $O(1)$ advancement and stable iterators for direct $O(1)$ order cancellations via `std::unordered_map<OrderId, OrderLocation>`.
+2. **Fixed-Point Arithmetic & Bounded Data Structures:** Prices are represented as 64-bit fixed-point integers (scale 10,000), avoiding floating-point division penalties. The UDP gap detector employs a bounded 64K circular bitmap (`std::array<uint64_t, 1024>`) with zero heap allocation on packet arrival.
+3. **Lock-Free Concurrency:** Inter-thread communication uses a Single-Producer Single-Consumer (SPSC) ring buffer with `std::atomic` acquire/release memory semantics and 64-byte cacheline isolation (`alignas(64)`), avoiding kernel context switches and OS mutex locks.
 
 #### Q4: How is market manipulation (spoofing/layering) detected?
 **Answer:** The surveillance engine computes an 8-dimensional behavioral vector across a sliding time window (order-to-trade ratio, cancellation velocity, quote lifetime, price deviation, depth skew, aggressor imbalance, message rate, and fill ratio). This vector is standardized and compared against benchmark manipulation signatures using cosine vector similarity (`fn_cosine_similarity`). If similarity exceeds threshold (e.g. 85%) or rule flags trip, an alert is raised in the `alerts` table and streamed via WebSocket to the investigator console.

@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { AuthService } from '../backend/services/authService';
 import { TradingService } from '../backend/services/tradingService';
 import { SurveillanceService } from '../backend/services/surveillanceService';
@@ -27,6 +28,11 @@ async function runTests() {
   // Re-seed user password hashes for test predictability
   await db.query(
     `UPDATE users SET password_hash = '$2b$10$7QlrqW9o3nnVMyXBeI82WesAjib/ACpDAjyrykCtpMvZmDZFG.9DK', failed_logins = 0, locked_until = NULL`
+  );
+
+  // Cancel any lingering dynamic open orders from prior tests to ensure deterministic book state
+  await db.query(
+    `UPDATE orders SET status = 'CANCELLED' WHERE status IN ('OPEN', 'PARTIALLY_FILLED') AND order_id > 5006`
   );
 
   // Test 1: User Registration
@@ -256,6 +262,84 @@ async function runTests() {
     const searchResults = await SurveillanceService.searchNotes('spoofing');
     if (searchResults.length === 0) {
       throw new Error('Full-text search for "spoofing" returned 0 results');
+    }
+  });
+
+  // Test 10: Client-Supplied Idempotency: Retries with same clientOrderId return original order without double-execution
+  await test('Client Idempotency: Retrying with identical clientOrderId returns original order', async () => {
+    const idempotencyKey = randomUUID();
+
+    const firstSubmit = await TradingService.submitOrder({
+      accountId: testAccountId,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1395.0,
+      quantity: 10,
+      clientOrderId: idempotencyKey
+    });
+
+    const retrySubmit = await TradingService.submitOrder({
+      accountId: testAccountId,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1395.0,
+      quantity: 10,
+      clientOrderId: idempotencyKey
+    });
+
+    if (firstSubmit.order.order_id !== retrySubmit.order.order_id) {
+      throw new Error(`Expected identical orderId on retry, got ${firstSubmit.order.order_id} vs ${retrySubmit.order.order_id}`);
+    }
+
+    if (retrySubmit.order.client_order_id !== idempotencyKey) {
+      throw new Error(`Expected client_order_id ${idempotencyKey}, got ${retrySubmit.order.client_order_id}`);
+    }
+
+    // Verify in database that only 1 record exists
+    const countRes = await db.query('SELECT COUNT(*)::INT AS cnt FROM orders WHERE client_order_id = $1', [idempotencyKey]);
+    if (countRes.rows[0].cnt !== 1) {
+      throw new Error(`Expected exactly 1 order in database for idempotency key, found ${countRes.rows[0].cnt}`);
+    }
+  });
+
+  // Test 11: Client-Supplied Idempotency: Reusing clientOrderId with different payload is rejected with 409 Conflict
+  await test('Client Idempotency: Reusing clientOrderId with differing payload is rejected with 409 Conflict', async () => {
+    const idempotencyKey = randomUUID();
+
+    await TradingService.submitOrder({
+      accountId: testAccountId,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1395.0,
+      quantity: 10,
+      clientOrderId: idempotencyKey
+    });
+
+    let rejected = false;
+    try {
+      // Differing quantity (25 instead of 10)
+      await TradingService.submitOrder({
+        accountId: testAccountId,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1395.0,
+        quantity: 25,
+        clientOrderId: idempotencyKey
+      });
+    } catch (err: unknown) {
+      rejected = true;
+      const status = (err && typeof err === 'object' && 'statusCode' in err) ? (err as { statusCode: number }).statusCode : 0;
+      if (status !== 409) {
+        throw new Error(`Expected status code 409 Conflict on payload mismatch, got ${status}`);
+      }
+    }
+
+    if (!rejected) {
+      throw new Error('Expected submitOrder to reject conflicting payload reuse of idempotency key');
     }
   });
 

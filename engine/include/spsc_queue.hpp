@@ -8,11 +8,8 @@
 
 namespace meridian {
 
-#if defined(__cpp_lib_hardware_interference_size)
-inline constexpr std::size_t kCacheLineSize = std::hardware_destructive_interference_size;
-#else
+// Standard x86_64 / ARM64 L1 cache line size (64 bytes) to eliminate false sharing
 inline constexpr std::size_t kCacheLineSize = 64;
-#endif
 
 template <typename T, std::size_t Capacity>
 class SPSCQueue {

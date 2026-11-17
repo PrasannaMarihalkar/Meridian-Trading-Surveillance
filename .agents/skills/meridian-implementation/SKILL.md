@@ -11,9 +11,11 @@ This skill guides engineers and automated agents in safely implementing code cha
 
 ## 1. Core Operating Principles
 
-1. **Test-First Defect Remediation:** Always reproduce an issue with a failing test case in `engine/tests/` or `tests/` before applying code edits.
-2. **Preserve Financial Invariants:** Double-entry bookkeeping must never be violated. Every trade requires 2 side-specific fills (`BUY` and `SELL`). Debits must equal credits.
-3. **Zero Lint & Type Tolerances:** Run `npx tsc --noEmit` and `npm run lint` (`--max-warnings 0`) after every TypeScript change.
+1. **Client-Supplied Idempotency:** Every order submission MUST accept a client-supplied `clientOrderId`. Never generate internal random UUIDs that defeat network retries. Scoped to `(account_id, client_order_id)`. Legitimate retries return original order and executions; mismatched payloads return `409 Conflict`.
+2. **Single-Authority Execution (DATABASE Mode in Stage 2):** In Stage 2, PostgreSQL is the sole authoritative matching engine. Automatic cross-engine fallback is strictly prohibited. Authoritative C++ matching and shadow comparison are deferred until durable outbox sequencing and reconciliation harnesses are implemented.
+3. **Test-First Defect Remediation:** Always reproduce an issue with a failing test case in `engine/tests/` or `tests/` before applying code edits.
+4. **Preserve Financial Invariants:** Double-entry bookkeeping must never be violated. Every trade requires 2 side-specific fills (`BUY` and `SELL`). Debits must equal credits.
+5. **Zero Lint & Type Tolerances:** Run `npx tsc --noEmit` and `npm run lint` (`--max-warnings 0`) after every TypeScript change.
 
 ---
 
@@ -49,34 +51,28 @@ This skill guides engineers and automated agents in safely implementing code cha
 
 ---
 
-## 3. Protocol: Backend Dual-Mode IPC Integration
+## 3. Protocol: Backend Integration & Correlated IPC Bridge
 
-### Connecting `CppEngineBridge` to `TradingService`
-1. **Execution Mode Configuration:**
-   - Define execution modes: `CPP`, `DATABASE`, `HYBRID`. Default to `HYBRID`.
-2. **Order Submission Flow in `TradingService.submitOrder`:**
-   - Always run pre-trade risk validations (`validateRiskLimits`) first.
-   - If `CPP` or `HYBRID` mode:
-     - Check `CppEngineBridge.getInstance().isAvailable()`.
-     - If available:
-       - Send order to C++ engine via `bridge.submitOrder(...)`.
-       - Receive execution result (`status`, `filledQty`, and array of `trades`).
-       - Begin a database transaction (`BEGIN`).
-       - Insert the order record with the resulting status and filled quantity.
-       - For each trade returned by the engine, insert into `trades` table.
-       - Insert the two side-specific fills into `fills` table (`BUY` and `SELL`).
-       - Commit transaction (`COMMIT`).
-       - Database trigger `trg_fills_settlement` will automatically update cash balances and positions.
-     - If engine is offline:
-       - Log operational warning: `[WARN] C++ Engine unavailable; executing in DATABASE fallback mode`.
-       - Execute standard database matching transaction.
-
-### Cross-Platform Engine Spawning in `cppEngineBridge.ts`:
-1. Check for native binaries:
-   - If Windows: check for `engine/meridian_engine.exe` first; spawn directly if found.
-   - If only Linux binary exists, invoke WSL: `wsl -e bash -c "cd <wslPath> && ./engine/meridian_engine"`.
-   - If neither is available, mark bridge as unavailable and proceed in database mode.
-2. In `tests/cpp_bridge.test.ts`, ensure `bridge.shutdown()` is invoked in a `finally` block to prevent lingering child processes.
+### Stage 2 Boundaries & Execution Rules
+1. **DATABASE Mode as Sole Authoritative Engine:**
+   - In Stage 2, `DATABASE` mode is the only production matching mode. Orders are matched atomically within PostgreSQL using `SELECT ... FOR UPDATE` row locks.
+   - Automatic fallback between matching engines is **strictly prohibited**.
+2. **Client-Supplied Idempotency Contract:**
+   - `orderRoutes.ts` parses `clientOrderId` (UUID string) from the client request.
+   - If `client_order_id` exists for that `account_id`:
+     - If payload matches: return original order and executed trades (`200 OK`).
+     - If payload differs: reject with `409 Conflict`.
+3. **Correlated IPC Bridge Protocol:**
+   - Replace naive FIFO shift (`requestQueue[0]`) in `cppEngineBridge.ts` with explicit correlation mapping:
+     - Map in-flight promises by `order_id` (`Map<number, PendingPromise>`).
+     - C++ engine echoes `order_id` in `ACK <order_id> ...` and `CANCELLED <order_id>`.
+     - Eliminates head-of-line response desynchronization across stdio pipes.
+4. **Cross-Platform Engine Spawning:**
+   - Check for native binaries:
+     - If Windows: check for `engine/meridian_engine.exe` first; spawn directly if found without invoking WSL.
+     - If only Linux binary exists, invoke WSL: `wsl -e bash -c "cd <wslPath> && ./engine/meridian_engine"`.
+     - If neither is available, mark bridge as unavailable for tests.
+   - In `tests/cpp_bridge.test.ts`, ensure `bridge.shutdown()` is invoked in a `finally` block to prevent lingering child processes.
 
 ---
 

@@ -11,7 +11,34 @@ export interface PlaceOrderInput {
   timeInForce?: TimeInForce;
   price: number;
   quantity: number;
+  clientOrderId?: string;
 }
+
+/**
+ * Sequential execution mutex to guarantee strict deterministic order matching,
+ * atomic transaction isolation, and eliminate race conditions on sequence generation.
+ */
+class ExecutionMutex {
+  private queue: Promise<void> = Promise.resolve();
+
+  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    let release: () => void;
+    const ticket = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const previous = this.queue;
+    this.queue = ticket;
+
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release!();
+    }
+  }
+}
+
+const matchingMutex = new ExecutionMutex();
 
 export class TradingService {
   /**
@@ -108,16 +135,55 @@ export class TradingService {
    * Submit and Match Order (Atomic Transaction with Row-Level Locking)
    */
   static async submitOrder(input: PlaceOrderInput): Promise<{ order: Order; trades: Trade[] }> {
+    return matchingMutex.runExclusive(async () => {
+      const db = await getDatabase();
+      const clientOrderId = input.clientOrderId || randomUUID();
+
+    // Idempotency check: verify if an order with this clientOrderId already exists
+    const existingRes = await db.query<Order>(
+      `SELECT * FROM orders WHERE client_order_id = $1`,
+      [clientOrderId]
+    );
+
+    if (existingRes.rows.length > 0) {
+      const existing = existingRes.rows[0];
+      // Verify account ownership
+      if (Number(existing.account_id) !== Number(input.accountId)) {
+        const err = new Error('Forbidden: clientOrderId belongs to another account');
+        (err as unknown as { statusCode: number }).statusCode = 403;
+        throw err;
+      }
+
+      // Verify payload parameters match
+      const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
+      const qtyMatches = Number(existing.quantity) === Number(input.quantity);
+      const sideMatches = existing.side === input.side;
+      const typeMatches = existing.order_type === input.orderType;
+      const instMatches = Number(existing.instrument_id) === Number(input.instrumentId);
+
+      if (!priceMatches || !qtyMatches || !sideMatches || !typeMatches || !instMatches) {
+        const err = new Error('Idempotency key reused with differing order parameters');
+        (err as unknown as { statusCode: number }).statusCode = 409;
+        throw err;
+      }
+
+      // Legitimate retry: return existing order and its executed trades
+      const existingTradesRes = await db.query<Trade>(
+        `SELECT * FROM trades WHERE buy_order_id = $1 OR sell_order_id = $1 ORDER BY trade_id ASC`,
+        [existing.order_id]
+      );
+
+      return { order: existing, trades: existingTradesRes.rows };
+    }
+
     await this.validateRiskLimits(input);
 
-    const db = await getDatabase();
     await db.query('BEGIN');
 
     try {
-      // Generate Order ID & Client Order ID
+      // Generate Order ID
       const oidRes = await db.query('SELECT COALESCE(MAX(order_id), 5000) + 1 AS next_id FROM orders');
       const orderId = parseInt(oidRes.rows[0].next_id, 10);
-      const clientOrderId = randomUUID();
       const tif = input.timeInForce || (input.orderType === 'IOC' ? 'IOC' : 'DAY');
 
       // Insert Order as OPEN
@@ -282,59 +348,91 @@ export class TradingService {
       }
 
       return { order: activeOrder, trades };
-    } catch (err) {
+    } catch (err: unknown) {
       await db.query('ROLLBACK');
+
+      // Check if duplicate client_order_id was inserted concurrently
+      if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === '23505') {
+        const concurrentRes = await db.query<Order>(
+          `SELECT * FROM orders WHERE client_order_id = $1`,
+          [clientOrderId]
+        );
+        if (concurrentRes.rows.length > 0) {
+          const existing = concurrentRes.rows[0];
+          const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
+          const qtyMatches = Number(existing.quantity) === Number(input.quantity);
+          const sideMatches = existing.side === input.side;
+          const typeMatches = existing.order_type === input.orderType;
+          const instMatches = Number(existing.instrument_id) === Number(input.instrumentId);
+
+          if (priceMatches && qtyMatches && sideMatches && typeMatches && instMatches) {
+            const concurrentTrades = await db.query<Trade>(
+              `SELECT * FROM trades WHERE buy_order_id = $1 OR sell_order_id = $1 ORDER BY trade_id ASC`,
+              [existing.order_id]
+            );
+            return { order: existing, trades: concurrentTrades.rows };
+          } else {
+            const conflictErr = new Error('Idempotency key reused with differing order parameters');
+            (conflictErr as unknown as { statusCode: number }).statusCode = 409;
+            throw conflictErr;
+          }
+        }
+      }
+
       throw err;
     }
+    });
   }
 
   /**
    * Cancel Order (Atomic Transaction)
    */
   static async cancelOrder(orderId: number, accountId: number): Promise<Order> {
-    const db = await getDatabase();
-    await db.query('BEGIN');
+    return matchingMutex.runExclusive(async () => {
+      const db = await getDatabase();
+      await db.query('BEGIN');
 
-    try {
-      const orderRes = await db.query<Order>(
-        `SELECT * FROM orders WHERE order_id = $1 AND account_id = $2 FOR UPDATE`,
-        [orderId, accountId]
-      );
-
-      if (orderRes.rows.length === 0) {
-        throw new Error(`Order ${orderId} not found or unauthorized`);
-      }
-
-      const order = orderRes.rows[0];
-      if (order.status !== 'OPEN' && order.status !== 'PARTIALLY_FILLED') {
-        throw new Error(`Order ${orderId} cannot be cancelled in state ${order.status}`);
-      }
-
-      const updated = await db.query<Order>(
-        `UPDATE orders SET status = 'CANCELLED', cancel_requested_at = NOW(), updated_at = NOW()
-         WHERE order_id = $1 RETURNING *`,
-        [orderId]
-      );
-
-      await db.query('COMMIT');
-
-      // Real-time Order Book depth update after cancellation
       try {
-        const snapshot = await this.getOrderBookSnapshot(order.instrument_id, 10);
-        broadcastMarketData({
-          type: 'BOOK_UPDATE',
-          data: { instrumentId: order.instrument_id, snapshot },
-          timestamp: new Date().toISOString()
-        });
-      } catch (wsErr) {
-        console.warn('[WS_BROADCAST] Cancel market broadcast error:', wsErr);
-      }
+        const orderRes = await db.query<Order>(
+          `SELECT * FROM orders WHERE order_id = $1 AND account_id = $2 FOR UPDATE`,
+          [orderId, accountId]
+        );
 
-      return updated.rows[0];
-    } catch (err) {
-      await db.query('ROLLBACK');
-      throw err;
-    }
+        if (orderRes.rows.length === 0) {
+          throw new Error(`Order ${orderId} not found or unauthorized`);
+        }
+
+        const order = orderRes.rows[0];
+        if (order.status !== 'OPEN' && order.status !== 'PARTIALLY_FILLED') {
+          throw new Error(`Order ${orderId} cannot be cancelled in state ${order.status}`);
+        }
+
+        const updated = await db.query<Order>(
+          `UPDATE orders SET status = 'CANCELLED', cancel_requested_at = NOW(), updated_at = NOW()
+           WHERE order_id = $1 RETURNING *`,
+          [orderId]
+        );
+
+        await db.query('COMMIT');
+
+        // Real-time Order Book depth update after cancellation
+        try {
+          const snapshot = await this.getOrderBookSnapshot(order.instrument_id, 10);
+          broadcastMarketData({
+            type: 'BOOK_UPDATE',
+            data: { instrumentId: order.instrument_id, snapshot },
+            timestamp: new Date().toISOString()
+          });
+        } catch (wsErr) {
+          console.warn('[WS_BROADCAST] Cancel market broadcast error:', wsErr);
+        }
+
+        return updated.rows[0];
+      } catch (err) {
+        await db.query('ROLLBACK');
+        throw err;
+      }
+    });
   }
 
   /**

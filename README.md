@@ -23,10 +23,12 @@ Financial market infrastructure operates under two conflicting requirements:
 2. **Strict Transactional Persistence & Compliance:** Every match must produce atomic, side-specific clearing records, rebalance cash and position ledgers, maintain an immutable audit trail, and monitor order flow for abusive patterns (such as spoofing, layering, and quote stuffing).
 
 **MERIDIAN** resolves this trade-off through a decoupled, multi-paradigm architecture:
-- **C++20 Matching Engine Core:** Continuous double auction engine utilizing intrusive doubly-linked price levels, a lock-free Single-Producer Single-Consumer (SPSC) ring buffer, and UDP sequence gap detection. Benchmarked at **~3.9 million orders/second** with **152 ns median latency**.
-- **PostgreSQL Relational Ledger:** 17 normalized entities conforming strictly to **Boyce-Codd Normal Form (BCNF)**, 4 analytical views, settlement triggers, and an immutable append-only audit trail.
+- **Production Relational Ledger & Authoritative Matching:** PostgreSQL `DATABASE` mode is the **sole authoritative production matching engine** for all live order execution, row-level concurrency locking, pre-trade risk controls, double-entry cash balances, position ledger updates, and immutable audit logging across 17 BCNF-normalized entities.
+- **Decoupled C++20 High-Performance Engine Core:** Continuous double auction engine utilizing an ordered price-time book (`std::map<Price, std::list<Order>>`), a lock-free Single-Producer Single-Consumer (SPSC) ring buffer, and a bounded 64K-sequence circular bitmap UDP gap detector. Benchmarked at **~3.9 million orders/second** with **152 ns median latency**, operating as a decoupled component for research, simulation, and high-frequency benchmarks.
 - **Multi-Dimensional Surveillance Engine:** Extracts an 8-dimensional behavioral feature vector from live order flow and computes **vector cosine similarity** against manipulative benchmark signatures.
 - **Institutional Web Terminal:** High-density dark-theme trading interface with real-time Level 2 book ladders, order blotters, surveillance consoles, and an interactive college query runner.
+
+> **Architectural Boundary Note:** To guarantee mathematical ledger integrity and eliminate cross-engine state bifurcation, PostgreSQL `DATABASE` mode acts as the sole production-authoritative source of truth. The standalone C++ matching engine (`engine/meridian_engine`) is compiled and tested as an independent systems component communicating via a hardened stdio IPC correlation bridge. Automatic cross-engine fallback is deliberately prohibited.
 
 ---
 
@@ -49,14 +51,14 @@ flowchart TD
         B5[WebSocket Publisher: LOB & Trade Ticks]
     end
 
-    subgraph ENG ["Low-Latency Systems Core (C++20)"]
+    subgraph ENG ["Low-Latency Systems Core (C++20 Standalone / IPC)"]
         C1[OrderBook: Price-Time Continuous Auction]
-        C2[Intrusive Doubly-Linked Price Levels]
+        C2[Price-Time Order Book: std::map + std::list]
         C3[Lock-Free SPSC Ring Buffer: alignas 64]
-        C4[UDP Packet Sequence Gap Detector]
+        C4[UDP Packet Sequence Gap Detector: 64K Bitmap]
     end
 
-    subgraph DB ["Relational Persistence Tier (PostgreSQL 16 BCNF / PGlite)"]
+    subgraph DB ["Relational Persistence Tier (PostgreSQL 16 BCNF / PGlite - Sole Production Engine)"]
         D1[(17 Relational Tables: Users, Orders, Trades, Fills)]
         D2[(Settlement Triggers: Cash Debits & Position Updates)]
         D3[(Vector Cosine Similarity & Realized PnL Stored Procedures)]
@@ -75,10 +77,10 @@ flowchart TD
 
 ### 3.1 C++20 Order Matching Engine (`engine/`)
 - **Price-Time Priority (FIFO):** Bids are sorted descending (`price DESC, time ASC`); asks are sorted ascending (`price ASC, time ASC`).
-- **Memory Efficiency:** Resting orders reside in pre-allocated intrusive doubly-linked lists. Inserting or removing resting orders takes $O(1)$ time with zero dynamic allocation on the fast path.
+- **Data Structures & Ordering:** Price levels are indexed via `std::map` (red-black tree), guaranteeing $O(\log P)$ price tier lookups and $O(1)$ best-bid/best-ask retrieval. Within each tier, resting orders reside in a `std::list<Order>`, providing $O(1)$ FIFO queue advancement and stable iterators for direct $O(1)$ order cancellation via `std::unordered_map<OrderId, OrderLocation>`.
 - **Fixed-Point Pricing:** Prices are mapped to 64-bit integer ticks (`price = double * 10,000`), eliminating floating-point rounding errors and division overhead.
-- **Lock-Free SPSC Queue (`include/spsc_queue.hpp`):** Single-Producer Single-Consumer circular queue with atomic head/tail indices isolated on independent 64-byte cache lines to eliminate false sharing.
-- **UDP Gap Detection (`include/gap_detector.hpp`):** Tracks monotonic sequence numbers across multicast market feeds, identifying packet drops and out-of-order deliveries.
+- **Lock-Free SPSC Queue (`include/spsc_queue.hpp`):** Single-Producer Single-Consumer circular queue with atomic head/tail indices isolated on independent 64-byte cache lines (`alignas(64)`) to eliminate false sharing.
+- **UDP Gap Detection (`include/gap_detector.hpp`):** Tracks monotonic sequence numbers across multicast market feeds using a pre-allocated 64K circular bitmap (`std::array<uint64_t, 1024>`), providing bounded $O(1)$ gap detection with zero heap allocations on packet ingress.
 
 ### 3.2 Relational Database Architecture (`database/`)
 The database contains **17 entities in Boyce-Codd Normal Form (BCNF)** across four domains:
@@ -170,22 +172,25 @@ Open **`http://localhost:4000`** in your browser.
 ## 7. Verification & Testing
 
 ```bash
-# 1. Run Backend Integration Test Suite (9/9 passed)
+# 1. Run Backend Integration & Idempotency Test Suite (11/11 passed)
 npm test
 
-# 2. Run C++ Stdio IPC Bridge Test (3/3 passed)
-npx tsx tests/cpp_bridge.test.ts
+# 2. Run Database Concurrency, Row-Locking & Financial Parity Stress Test
+npm run test:concurrency
 
-# 3. Verify Database Schema, Atomicity & Rollbacks on Disposable Instance
+# 3. Run Hardened C++ Stdio IPC Bridge Test (6/6 passed)
+npm run test:bridge
+
+# 4. Verify Database Schema, Atomicity & Rollbacks on Disposable Instance
 npx tsx scripts/verify_disposable_db.ts
 
-# 4. Execute All 17 Official College Demonstration SQL Queries
+# 5. Execute All 17 Official College Demonstration SQL Queries
 npm run demo:queries
 
-# 5. Compile and Run Standalone C++ Matching Engine Tests (Linux / WSL)
+# 6. Compile and Run Standalone C++ Matching Engine Tests (Linux / WSL)
 g++ -std=c++20 -O3 -pthread -Iengine/include engine/src/order_book.cpp engine/tests/test_order_book.cpp -o test_ob && ./test_ob
 
-# 6. Run C++ High-Throughput Benchmark (100,000 orders)
+# 7. Run C++ High-Throughput Benchmark (100,000 orders)
 g++ -std=c++20 -O3 -pthread -Iengine/include engine/src/order_book.cpp engine/benchmarks/benchmark_engine.cpp -o bench_ob && ./bench_ob
 ```
 

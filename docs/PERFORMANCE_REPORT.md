@@ -13,7 +13,7 @@
 In high-frequency trading and financial systems engineering, benchmark figures must be reported with strict transparency regarding scope, measurement points, and hardware constraints.
 
 ### 1.1 Scope Boundaries
-- **C++ Matching Engine Benchmark:** Measures pure in-memory, price-time priority double-auction matching throughput and latency using a dense intrusive doubly-linked list (`PriceLevel`) and red-black tree order book. It does **not** include network socket round-trips or disk writes.
+- **C++ Matching Engine Benchmark:** Measures pure in-memory, price-time priority double-auction matching throughput and latency using `std::map<Price, std::list<Order>>` and red-black tree order book. It does **not** include network socket round-trips or disk writes.
 - **Backend REST API Benchmark:** Measures end-to-end HTTP request processing, JSON serialization, Express routing, and PGlite embedded PostgreSQL database query execution.
 - **Database Query Benchmark:** Measures execution time of analytical relational queries (Q1–Q17) containing joins, groupings, and vector similarity calculations.
 
@@ -54,7 +54,7 @@ Two independent repetitions were executed under identical conditions:
 | **Peak Latency** | 1.12 ms | 579.8 µs | 851.8 µs |
 
 ### 3.2 Key Architectural Factors
-1. **Intrusive Doubly-Linked Lists:** Orders at the same price tier are maintained in an intrusive FIFO doubly-linked list. Appending and removing orders occurs in $O(1)$ time with zero dynamic memory allocation on the match path.
+1. **Price-Time Priority Data Structures:** Orders at each price tier are maintained in a `std::list<Order>`, enabling $O(1)$ FIFO queue advancement and stable iterator references for $O(1)$ order cancellations via hash map index.
 2. **Cacheline Isolation:** Atomic indices in the lock-free SPSC queue (`head_` and `tail_`) are isolated with `alignas(64)` to eliminate CPU cache false sharing.
 3. **Fixed-Point Arithmetic:** Prices are stored as 64-bit signed integers representing four decimal places ($1.0000 = 10,000$), completely avoiding floating-point division penalties.
 

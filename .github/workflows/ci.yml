@@ -187,14 +187,27 @@ jobs:
           retention-days: 7
 
   # ─────────────────────────────────────────────────────────────────
-  # Job 7: C++ engine build and tests (Linux, g++ available)
+  # Job 7: C++ engine build, tests, and IPC bridge verification
   # ─────────────────────────────────────────────────────────────────
   cpp-build-and-test:
-    name: C++ Engine Build & Test
+    name: C++ Engine Build, Test & IPC Bridge
     runs-on: ubuntu-latest
+    needs: [dependency-install]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install build tools
         run: |
@@ -204,7 +217,7 @@ jobs:
       - name: Verify g++ version (need C++20 support)
         run: g++ --version
 
-      - name: Build C++ engine and test binary
+      - name: Build C++ order book test binary
         run: |
           g++ -std=c++20 -O2 -Wall -Wextra -pthread \
             -Iengine/include \
@@ -223,6 +236,21 @@ jobs:
             engine/tests/test_order_book.cpp \
             -o test_ob_asan
           ./test_ob_asan
+
+      - name: Build standalone C++ engine executable
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -pthread \
+            -Iengine/include \
+            engine/src/order_book.cpp \
+            engine/src/main.cpp \
+            -o engine/meridian_engine
+
+      - name: Smoke test standalone engine CLI protocol
+        run: |
+          printf "SNAPSHOT 1\nQUIT\n" | ./engine/meridian_engine
+
+      - name: Run C++ IPC bridge integration test against live binary
+        run: npx tsx tests/cpp_bridge.test.ts
 
   # ─────────────────────────────────────────────────────────────────
   # Job 8: Secret scanning

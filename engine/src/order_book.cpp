@@ -74,7 +74,7 @@ bool OrderBook::cancel_order(OrderId order_id) {
     return true;
 }
 
-std::vector<Trade> OrderBook::process_order(Order order) {
+std::vector<Trade> OrderBook::process_order(Order& order) {
     if (order.timestamp_ns == 0) {
         order.timestamp_ns = now_ns();
     }
@@ -96,21 +96,27 @@ std::vector<Trade> OrderBook::process_order(Order order) {
         trades = match_limit_sell(order);
     }
 
-    // If order has unfulfilled balance and is standard LIMIT (not IOC), rest it on the book
-    if (order.leaves_qty() > 0 && order.order_type == OrderType::LIMIT) {
-        order.status = (order.filled_qty > 0) ? OrderStatus::PARTIALLY_FILLED : OrderStatus::OPEN;
-        if (order.side == Side::BUY) {
-            auto& level = bids_[order.price];
-            level.push_back(order);
-            auto iter = --level.end();
-            order_map_[order.order_id] = {Side::BUY, order.price, iter};
-            total_bid_vol_ += order.leaves_qty();
-        } else {
-            auto& level = asks_[order.price];
-            level.push_back(order);
-            auto iter = --level.end();
-            order_map_[order.order_id] = {Side::SELL, order.price, iter};
-            total_ask_vol_ += order.leaves_qty();
+    // If order has unfulfilled balance:
+    // Standard LIMIT orders rest on the book.
+    // Immediate-or-Cancel (IOC) and MARKET orders cancel any unfulfilled leaves quantity immediately.
+    if (order.leaves_qty() > 0) {
+        if (order.order_type == OrderType::LIMIT) {
+            order.status = (order.filled_qty > 0) ? OrderStatus::PARTIALLY_FILLED : OrderStatus::OPEN;
+            if (order.side == Side::BUY) {
+                auto& level = bids_[order.price];
+                level.push_back(order);
+                auto iter = --level.end();
+                order_map_[order.order_id] = {Side::BUY, order.price, iter};
+                total_bid_vol_ += order.leaves_qty();
+            } else {
+                auto& level = asks_[order.price];
+                level.push_back(order);
+                auto iter = --level.end();
+                order_map_[order.order_id] = {Side::SELL, order.price, iter};
+                total_ask_vol_ += order.leaves_qty();
+            }
+        } else if (order.order_type == OrderType::IOC || order.order_type == OrderType::MARKET) {
+            order.status = OrderStatus::CANCELLED;
         }
     }
 

@@ -13,10 +13,12 @@
 MERIDIAN is designed as a simulation of a modern electronic financial exchange and compliance ecosystem. Unlike generic web applications that perform simple CRUD operations, MERIDIAN's core challenge is maintaining **strict transactional correctness and consistency under high-frequency state transitions**, while simultaneously streaming real-time market data and monitoring participant order-flow for market abuse.
 
 The system partitions workloads across specialized architectural tiers:
-1. **Low-Latency Systems Core (C++20):** Nanosecond-level order matching, lock-free ring-buffer dispatching, UDP market dissemination, and sequence-gap detection.
-2. **Relational Transactional Core (PostgreSQL):** ACID ledger enforcing referential integrity across 17 entities, side-specific trade fills, inventory positions, risk limits, and immutable audit logs.
+1. **Relational Transactional Core (PostgreSQL):** The **sole authoritative production matching engine**, maintaining an ACID ledger enforcing referential integrity across 17 entities, row-level locking for deterministic order matching, side-specific trade fills, inventory positions, risk limits, and immutable audit logs.
+2. **Low-Latency Systems Core (C++20 Standalone / IPC Bridge):** Decoupled high-performance matching engine (`engine/meridian_engine`) benchmarked at ~3.9M orders/sec with 152 ns median latency, lock-free ring-buffer dispatching, UDP market dissemination, and 64K bounded circular bitmap gap detection. Used for research, simulations, and benchmark evaluation.
 3. **Behavioral Surveillance Engine:** Vector similarity clustering over 8-dimensional order-flow behavioral metrics to flag spoofing, layering, and quote-stuffing manipulation.
 4. **Institutional Web Interface (Next.js / React / TypeScript):** High-density, real-time trader terminal and compliance investigation console.
+
+> **Execution Boundary Decision:** In Stage 2, PostgreSQL `DATABASE` mode remains the sole authoritative production matching engine. The C++ engine operates via a correlated IPC bridge for simulation, research, and benchmarking. Automatic cross-engine fallback and dual-engine active replication are strictly prohibited to prevent financial state divergence.
 
 ---
 
@@ -64,23 +66,23 @@ The system partitions workloads across specialized architectural tiers:
 
 ### 3.1 Price-Time Priority Limit Order Book (LOB)
 The matching engine implements standard continuous double-auction price-time priority:
-- **Price Levels:** Bids sorted in descending order (highest buyer has priority); Asks sorted in ascending order (lowest seller has priority).
-- **Time Priority:** Within any given price tick, orders are organized in a FIFO queue. Early orders are matched before later arrivals at identical price points.
+- **Price Levels:** Bids sorted in descending order (`std::map<Price, std::list<Order>, std::greater<Price>>`); Asks sorted in ascending order (`std::map<Price, std::list<Order>, std::less<Price>>`). Best-price lookup is $O(1)$ via `.begin()`.
+- **Time Priority:** Within any given price tick, orders are organized in a FIFO queue (`std::list<Order>`). Early orders are matched before later arrivals at identical price points. Insertion/deletion in the queue is $O(1)$ with stable iterators stored in `std::unordered_map<OrderId, OrderLocation>` for direct $O(1)$ cancellation.
 - **Order Types Supported:**
   - `LIMIT`: Rests on the book if not immediately matched at the specified price or better.
   - `MARKET`: Aggressively sweeps existing opposite book liquidity up to available quantity.
-  - `IOC` (Immediate-Or-Cancel): Fills whatever quantity is immediately available at limit price; unfulfilled balance is immediately cancelled without resting on the book.
+  - `IOC` (Immediate-Or-Cancel): Fills whatever quantity is immediately available at limit price; unfulfilled balance is immediately cancelled (`OrderStatus::CANCELLED`) without resting on the book.
 
 ### 3.2 Lock-Free SPSC Ring Buffer
 To isolate the matching engine thread from network OS syscalls and lock contention, order intake leverages a Single-Producer Single-Consumer (SPSC) ring buffer (derived from verified reference `cpp-lockfree-queue`):
-- Cache-line padded read and write cursors prevent CPU cache false sharing.
+- Cache-line padded read and write cursors (`alignas(64)`) prevent CPU cache false sharing.
 - `std::memory_order_acquire` and `std::memory_order_release` atomic semantics guarantee memory visibility without kernel mutexes.
 - Constant $O(1)$ enqueue and dequeue time with zero heap allocations on the hot execution path.
 
 ### 3.3 UDP Dissemination & Monotonic Gap Recovery
 Mirroring institutional feeds (e.g., NASDAQ ITCH / MoldUDP64):
 - Market updates are broadcast over UDP multicast packets stamped with monotonically increasing 64-bit sequence numbers (`engine_seq`).
-- A client-side gap detector (derived from verified reference `udp-gap-detector`) tracks expected versus received sequences.
+- A client-side gap detector (`include/gap_detector.hpp`) tracks expected versus received sequences using a bounded 64K-sequence circular bitmap (`std::array<uint64_t, 1024>`), guaranteeing $O(1)$ lookup and bounded memory (8,280 bytes) with zero dynamic allocation on packet arrival.
 - Upon detecting a packet drop ($Seq_{recv} > Seq_{expected}$), the client issues a targeted TCP retransmission request for the missing sequence range.
 
 ---

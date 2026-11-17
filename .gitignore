@@ -28,6 +28,8 @@ engine/bin/
 engine/test_order_book
 engine/benchmark_engine
 engine/meridian_engine
+test_ob*
+bench_ob*
 
 # OS & Editor
 .DS_Store

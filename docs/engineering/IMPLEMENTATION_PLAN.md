@@ -31,11 +31,11 @@ flowchart TD
         A2 --> A3[Harden Gap Detector Memory in gap_detector.hpp]
     end
 
-    subgraph P2 ["Phase 2: True Dual-Mode Bridge Integration"]
-        B1[Support Native Windows & Linux in cppEngineBridge.ts] --> B2[Introduce Dual Execution Mode in TradingService.ts]
-        B2 --> B3[Wire CppEngineBridge into submitOrder]
-        B3 --> B4[Persist C++ Matches into Fills & Trades Tables]
-        B4 --> B5[Implement Automatic Fallback to Database Matching]
+    subgraph P2 ["Phase 2: Client Idempotency & Correlated IPC Bridge"]
+        B1[Client-Supplied Idempotency Contract in orderRoutes.ts] --> B2[Native Windows & Linux Spawning in cppEngineBridge.ts]
+        B2 --> B3[Correlation ID Mapping by order_id in Bridge]
+        B3 --> B4[Formalize DATABASE as Sole Authoritative Engine]
+        B4 --> B5[Defer CPP Mode & Outbox Stream to Future Stages]
     end
 
     subgraph P3 ["Phase 3: CI/CD Pipeline & Integration Hardening"]
@@ -97,38 +97,40 @@ flowchart TD
 
 ---
 
-### Phase 2: True Dual-Mode Bridge Integration
+### Phase 2: Client Idempotency & Correlated IPC Bridge Hardening
 - **Priority:** **P0 (Blocker)**
 - **Target Files:**
-  - `backend/services/cppEngineBridge.ts`
+  - `backend/routes/orderRoutes.ts`
   - `backend/services/tradingService.ts`
+  - `backend/services/cppEngineBridge.ts`
   - `backend/types.ts`
   - `tests/cpp_bridge.test.ts`
+- **Architectural Decision Reference:** `docs/engineering/ENGINE_EXECUTION_INTEGRATION_DECISION.md` (Rev 2.0)
 
 #### Tasks:
-1. **Enhance Cross-Platform Process Spawning:**
+1. **Implement Client-Supplied Idempotency Contract:**
+   - In `backend/routes/orderRoutes.ts` and `backend/services/tradingService.ts`:
+     - Update `PlaceOrderSchema` to accept client-supplied `clientOrderId` (UUID string) in request body (or via `Idempotency-Key` header).
+     - Check durable storage for existing `client_order_id` scoped to the authenticated `account_id`.
+     - **Legitimate Retry (Identical Payload):** If `(account_id, client_order_id)` exists and order parameters (instrument, side, type, price, quantity) match, return existing order and its executed trades (`200 OK`) without re-executing.
+     - **Conflicting Reuse (Differing Payload):** If `client_order_id` is reused with different parameters, reject with `409 Conflict` (`"Idempotency key reused with differing order parameters"`).
+     - Remove internal server-side `clientOrderId = randomUUID()` generation that previously broke retry idempotency.
+2. **Enhance Cross-Platform Process Spawning & Correlated IPC:**
    - In `backend/services/cppEngineBridge.ts`:
      - Inspect if native binary exists: `engine/meridian_engine` (Linux/macOS) or `engine/meridian_engine.exe` (Windows).
-     - If on Windows and `engine/meridian_engine.exe` is found, spawn directly via `spawn(engineExe)`.
+     - If on Windows and `engine/meridian_engine.exe` is found, spawn directly via `spawn(engineExe)` without invoking WSL.
      - If on Windows and only Linux binary exists, check for WSL. If WSL unavailable, log clear status and set `this.ready = false`.
-     - Increase `waitForReady` default timeout to 6000ms to accommodate WSL cold boot.
-     - Ensure `shutdown()` properly terminates child processes and cleans up queues.
-2. **Implement Dual-Mode Execution in `TradingService`:**
-   - In `backend/services/tradingService.ts`:
-     - Read configuration: `const EXECUTION_MODE = process.env.MERIDIAN_EXECUTION_MODE || 'HYBRID';` (options: `CPP`, `DATABASE`, `HYBRID`).
-     - In `submitOrder(input)`:
-       - Perform pre-trade risk validations (active instrument, price collars, max quantities, cash balance).
-       - In `HYBRID` or `CPP` mode:
-         - Check `CppEngineBridge.getInstance().isAvailable()`.
-         - If available, dispatch order to C++ engine via `bridge.submitOrder()`.
-         - Receive ACK and matched trades from C++ engine across IPC.
-         - Atomically persist matched order, trades, and side-specific fills into PostgreSQL within a `BEGIN ... COMMIT` block.
-         - Let database triggers (`trg_fills_settlement`, `trg_orders_audit`) handle cash, position, and audit updates.
-         - If C++ engine is unavailable:
-           - Fall back gracefully to existing PostgreSQL `SELECT ... FOR UPDATE` matching algorithm with an operational warning log.
-3. **Verification Gate:**
-   - Execute order submissions via backend API; verify that when `meridian_engine` is running, trades are computed by the C++ engine and persisted to PostgreSQL.
-   - Verify that when `meridian_engine` is stopped, order matching falls back to the database without throwing uncaught 500 errors.
+     - Replace naive FIFO queue (`this.requestQueue[0]`) with explicit correlation map: key pending requests by `orderId` to eliminate head-of-line response desynchronization.
+     - Ensure `shutdown()` properly terminates child processes and cleans up pending promises.
+3. **Formalize `DATABASE` Mode as Sole Authoritative Engine in Stage 2:**
+   - Keep PostgreSQL as the sole authoritative matching engine.
+   - Defer authoritative `CPP` mode and `HYBRID` outbox streaming to future stages until complete transactional command replay and reconciliation harnesses are built.
+   - Strictly prohibit automatic cross-engine fallback.
+4. **Verification Gate:**
+   - Verify that client retries with identical `clientOrderId` return original order and trades without double-filling.
+   - Verify that client retries with altered payload are rejected with 409 Conflict.
+   - Verify that `DATABASE` mode continues passing all 9 existing tests and 17 demo queries.
+   - Verify that `tests/cpp_bridge.test.ts` executes cleanly against the live compiled binary with 0 hanging child processes.
 
 ---
 
@@ -213,9 +215,10 @@ Stage 2 will be certified complete only when the following exit criteria are emp
 1. `test_order_book` passes all tests, including new IOC cancellation unit tests, with 0 memory errors under ASan/UBSan.
 2. `meridian_engine` builds cleanly on both Linux (g++) and Windows (MSVC/g++).
 3. `tests/cpp_bridge.test.ts` executes live IPC assertions and passes with 0 failures and 0 dangling child processes.
-4. `TradingService` supports configurable C++ and Database execution modes with automated fallback.
-5. `npm test` passes all end-to-end integration tests.
-6. `npm run lint` passes with 0 warnings (`--max-warnings 0`).
-7. `npx tsc --noEmit` passes with 0 errors.
-8. Secret scanning passes with 0 leaks.
-9. Documentation contains zero inflated or fictitious technical claims.
+4. PostgreSQL `DATABASE` mode verified as the sole production-authoritative matching engine with client idempotency and double-entry consistency; C++ engine operates via hardened correlated IPC bridge for simulation and benchmarks.
+5. `npm test` passes all end-to-end integration tests (11/11 passed, including client idempotency).
+6. `npm run test:concurrency` passes all database concurrency and financial parity assertions.
+7. `npm run lint` passes with 0 warnings (`--max-warnings 0`).
+8. `npx tsc --noEmit` passes with 0 errors.
+9. Secret scanning passes with 0 leaks.
+10. Documentation contains zero inflated or fictitious technical claims.

@@ -95,25 +95,48 @@ void test_ioc_and_cancellation() {
     std::cout << "[TEST] Running test_ioc_and_cancellation..." << std::endl;
     OrderBook book(1, 500);
 
-    // Rest 40 shares @ $1400.00
-    Order s1{10, 10, 1, Side::SELL, OrderType::LIMIT, double_to_price(1400.00), 40, 0, OrderStatus::OPEN, 100};
-    book.process_order(s1);
-
-    // IOC Buy: 100 shares @ $1400.00
-    // Should match 40 shares, and remaining 60 shares must NOT rest on book
-    Order ioc_buy{11, 20, 1, Side::BUY, OrderType::IOC, double_to_price(1400.00), 100, 0, OrderStatus::OPEN, 200};
-    auto trades = book.process_order(ioc_buy);
-
-    assert(trades.size() == 1);
-    assert(trades[0].quantity == 40);
-    assert(book.best_bid() == 0); // IOC must not rest
+    // 1. Completely Unfilled IOC Order: No liquidity on book
+    Order ioc_unfilled{10, 20, 1, Side::BUY, OrderType::IOC, double_to_price(1400.00), 50, 0, OrderStatus::OPEN, 100};
+    auto trades0 = book.process_order(ioc_unfilled);
+    assert(trades0.empty());
+    assert(ioc_unfilled.filled_qty == 0);
+    // REGRESSION ASSERTION: Unfilled IOC order MUST be marked CANCELLED
+    assert(ioc_unfilled.status == OrderStatus::CANCELLED);
+    assert(book.best_bid() == 0);
     assert(book.total_bid_volume() == 0);
 
-    // Test Cancellation
-    Order s2{12, 10, 1, Side::SELL, OrderType::LIMIT, double_to_price(1405.00), 100, 0, OrderStatus::OPEN, 300};
+    // 2. Partially Filled IOC Order: 40 shares resting, 100 requested
+    Order s1{11, 10, 1, Side::SELL, OrderType::LIMIT, double_to_price(1400.00), 40, 0, OrderStatus::OPEN, 200};
+    book.process_order(s1);
+    assert(book.best_ask() == double_to_price(1400.00));
+    assert(book.total_ask_volume() == 40);
+
+    Order ioc_partial{12, 20, 1, Side::BUY, OrderType::IOC, double_to_price(1400.00), 100, 0, OrderStatus::OPEN, 300};
+    auto trades1 = book.process_order(ioc_partial);
+    assert(trades1.size() == 1);
+    assert(trades1[0].quantity == 40);
+    assert(ioc_partial.filled_qty == 40);
+    // REGRESSION ASSERTION: Partially filled IOC remainder MUST be cancelled
+    assert(ioc_partial.status == OrderStatus::CANCELLED);
+    assert(book.best_bid() == 0); // IOC remainder must NOT rest
+    assert(book.total_bid_volume() == 0);
+    assert(book.best_ask() == 0); // Resting order was consumed
+
+    // 3. Fully Filled IOC Order: 50 shares resting, 50 requested
+    Order s2{13, 10, 1, Side::SELL, OrderType::LIMIT, double_to_price(1402.00), 50, 0, OrderStatus::OPEN, 400};
     book.process_order(s2);
+    Order ioc_full{14, 20, 1, Side::BUY, OrderType::IOC, double_to_price(1402.00), 50, 0, OrderStatus::OPEN, 500};
+    auto trades2 = book.process_order(ioc_full);
+    assert(trades2.size() == 1);
+    assert(trades2[0].quantity == 50);
+    assert(ioc_full.filled_qty == 50);
+    assert(ioc_full.status == OrderStatus::FILLED);
+
+    // 4. Test Standard Limit Order Cancellation
+    Order s3{15, 10, 1, Side::SELL, OrderType::LIMIT, double_to_price(1405.00), 100, 0, OrderStatus::OPEN, 600};
+    book.process_order(s3);
     assert(book.best_ask() == double_to_price(1405.00));
-    assert(book.cancel_order(12) == true);
+    assert(book.cancel_order(15) == true);
     assert(book.best_ask() == 0);
     assert(book.total_ask_volume() == 0);
 
@@ -162,32 +185,59 @@ void test_gap_detector() {
     std::cout << "[TEST] Running test_gap_detector..." << std::endl;
     GapDetector detector;
 
-    // Receive packets 1, 2, 3
+    // Verify bounded memory footprint: fixed ~8 KB bitmap
+    std::cout << "  [INFO] GapDetector sizeof: " << sizeof(GapDetector) << " bytes (bounded, zero heap growth per packet)" << std::endl;
+    assert(sizeof(GapDetector) < 16384); // Must remain under 16 KB
+
+    // 1. Sequential arrival of packets 1, 2, 3
     detector.on_packet(1, 1000);
     detector.on_packet(2, 2000);
     detector.on_packet(3, 3000);
     assert(detector.total_received() == 3);
     assert(detector.total_lost() == 0);
+    assert(detector.duplicates() == 0);
 
-    // Skip packets 4, 5 and receive packet 6
+    // 2. Duplicate arrival of packet 2
+    detector.on_packet(2, 3500);
+    assert(detector.total_received() == 4);
+    assert(detector.duplicates() == 1);
+    assert(detector.total_lost() == 0);
+
+    // 3. Skip packets 4, 5 and receive packet 6 (gap [4, 5])
     detector.on_packet(6, 6000);
     assert(detector.total_lost() == 2);
     assert(detector.gaps().size() == 1);
     assert(detector.gaps()[0].start == 4);
     assert(detector.gaps()[0].end == 5);
 
-    // Out-of-order arrival of packet 4 (partial gap fill)
+    // 4. Out-of-order arrival of packet 4 (partial gap resolution)
     detector.on_packet(4, 7000);
     assert(detector.total_lost() == 1);
+    assert(detector.out_of_order() == 1);
     assert(detector.gaps()[0].start == 5);
     assert(detector.gaps()[0].end == 5);
 
-    // Out-of-order arrival of packet 5 (gap completely resolved)
+    // 5. Out-of-order arrival of packet 5 (complete gap resolution)
     detector.on_packet(5, 8000);
     assert(detector.total_lost() == 0);
+    assert(detector.out_of_order() == 2);
     assert(detector.gaps().empty());
 
-    std::cout << "  ✓ test_gap_detector passed" << std::endl;
+    // 6. Advance window significantly: advance to seq 100,000
+    uint64_t high_seq = 100000;
+    detector.on_packet(high_seq, 90000);
+    assert(detector.total_lost() > 0);
+
+    // 7. Stale packet arrival: packet 10 arrives when max_seq_ is 100,000 (age = 99,990 > 65,536 window)
+    uint64_t prev_stale = detector.stale_packets();
+    detector.on_packet(10, 95000);
+    assert(detector.stale_packets() == prev_stale + 1);
+
+    // 8. Large jump beyond entire window capacity (seq 300,000)
+    detector.on_packet(300000, 100000);
+    assert(detector.total_received() >= 8);
+
+    std::cout << "  ✓ test_gap_detector passed (duplicates, gaps, out-of-order, stale, and memory bounds verified)" << std::endl;
 }
 
 int main() {

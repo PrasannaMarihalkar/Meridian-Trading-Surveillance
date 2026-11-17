@@ -18,15 +18,15 @@ MERIDIAN v1.0.0 marks the initial production-ready release of the high-performan
 
 ### 1. High-Performance C++20 Order Matching Core
 - Continuous double auction matching with strict price-time priority.
-- Limit order book implemented with intrusive doubly-linked lists and red-black tree index.
-- Lock-free Single-Producer Single-Consumer (SPSC) ring buffer with cacheline alignment.
-- Monotonic UDP sequence gap detection and packet loss reordering window.
+- Limit order book implemented with `std::map<Price, std::list<Order>>` providing $O(1)$ best-price retrieval and stable FIFO queue iterators.
+- Lock-free Single-Producer Single-Consumer (SPSC) ring buffer with 64-byte cacheline alignment (`alignas(64)`).
+- Monotonic UDP sequence gap detection using a bounded 64K-sequence circular bitmap with zero dynamic heap allocation.
 - Benchmarked throughput: **~3.9M orders/sec** with **152 ns median latency**.
 - Passed AddressSanitizer, UndefinedBehaviorSanitizer (0 leaks), and ThreadSanitizer (0 data races).
 
-### 2. Dual-Mode Architecture & C++ Engine IPC Bridge
-- Node.js / TypeScript backend with bidirectional stdio line-protocol bridge (`cppEngineBridge.ts`) to the C++ core.
-- Automatic fallback to transaction-safe PostgreSQL continuous auction engine when C++ binary is not active.
+### 2. Standalone C++ Engine & Correlated IPC Bridge
+- Node.js / TypeScript backend with hardened bidirectional stdio line-protocol bridge (`cppEngineBridge.ts`) featuring request-response correlation maps and timeout safeguards.
+- PostgreSQL `DATABASE` mode operates as the sole production-authoritative matching engine, guaranteeing strict transactional ledger consistency and double-entry accounting. The standalone C++ engine is provided as a decoupled, high-performance simulation and benchmark component.
 
 ### 3. PostgreSQL Relational Subsystem (17 Entities, BCNF)
 - Complete relational schema across 4 domains (Identity, Trading, Surveillance, System).

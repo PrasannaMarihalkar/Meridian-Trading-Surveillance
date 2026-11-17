@@ -52,13 +52,49 @@
 
 ---
 
-### Entry 002: Stage 2 Implementation (Planned)
-- **Target Date:** Pending Stage 2 Initiation
-- **Status:** **QUEUED**
-- **Objectives:**
-  1. Fix IOC order status defect in `engine/src/order_book.cpp` and add tests in `engine/tests/test_order_book.cpp`.
-  2. Implement dual-mode matching (`CPP` vs `DATABASE`) in `backend/services/tradingService.ts` with automatic fallback.
-  3. Compile `meridian_engine` and enforce live `tests/cpp_bridge.test.ts` execution in `.github/workflows/ci.yml`.
-  4. Harden `engine/include/gap_detector.hpp` against heap allocations using fixed-size sequence sliding window.
-  5. Support native Windows binary spawning in `backend/services/cppEngineBridge.ts`.
-  6. Reconcile `README.md` and `docs/` with actual container architecture (`std::map` and `std::list`).
+### Entry 002: Stage 2 Architecture Gate & Pre-Implementation Decision
+- **Date:** November 17, 2026
+- **Status:** **APPROVED & COMPLETED**
+- **Decision Record:** `docs/engineering/ENGINEERING_EXECUTION_INTEGRATION_DECISION.md` (Rev 2.0)
+- **Key Architectural Directives:**
+  1. PostgreSQL `DATABASE` mode confirmed as sole authoritative production matching engine for Stage 2.
+  2. Automatic cross-engine fallback and dual-engine active replication prohibited to eliminate state bifurcation.
+  3. Client-supplied idempotency key contract required (`clientOrderId` scoped to authenticated principal).
+  4. C++ matching engine preserved as decoupled high-throughput component communicating via hardened correlated stdio IPC.
+
+---
+
+### Entry 003: Stage 2 Controlled Implementation & Defect Elimination
+- **Date:** November 17, 2026
+- **Status:** **COMPLETED & EMPIRICALLY VERIFIED**
+- **Auditor:** Principal Systems Architect & Engineering Verification Lead
+- **Activities & Verified Outcomes:**
+  1. **P0 C++ Immediate-or-Cancel (IOC) Status Defect Elimination (`REQ-CPP-03`):**
+     - Corrected unfulfilled remainder logic in `engine/src/order_book.cpp` to set `order.status = OrderStatus::CANCELLED`.
+     - Updated `OrderBook::process_order(Order& order)` pass-by-reference signature in `order_book.hpp` and `order_book.cpp` so mutated status and filled quantities propagate to callers.
+     - Resolved `-Winterference-size` compiler warning in `engine/include/spsc_queue.hpp` with pinned constant `kCacheLineSize = 64`.
+     - Added 3 regression test cases in `engine/tests/test_order_book.cpp` covering unfilled, partially filled, and fully filled IOC orders. Verified pass with 0 leaks/0 UB under AddressSanitizer and UndefinedBehaviorSanitizer.
+  2. **P0 Client-Supplied Idempotency Contract & Account Ownership Isolation (`REQ-INT-01`):**
+     - Updated `backend/routes/orderRoutes.ts` to accept optional client-supplied `clientOrderId: z.string().uuid()` and strictly derive account identity from authenticated principal (`req.user.accountId`), eliminating client-side spoofing.
+     - Enhanced `backend/services/tradingService.ts` with fast-path idempotency lookup returning original order and executions on legitimate retry, rejecting differing duplicate payloads with 409 Conflict, and catching concurrent `23505` unique violations.
+     - Added Test 10 and Test 11 to `tests/api.test.ts`. `npm test` verified: **11 passed, 0 failed**.
+  3. **P1 Bounded UDP Sequence Gap Detector (`REQ-CPP-06`):**
+     - Replaced unbounded `std::unordered_set` in `engine/include/gap_detector.hpp` with a pre-allocated 64K circular bitmap (`std::array<uint64_t, 1024>`, exactly 8,280 bytes).
+     - Achieved $O(1)$ constant-time lookup and zero dynamic heap allocation on packet ingress.
+     - Verified duplicate handling, gaps, out-of-order packet resolution, and stale packet rejection in `test_order_book.cpp`.
+  4. **P1 Standalone C++ Engine Executable & CI Integration (`REQ-INT-02`, `REQ-INT-03`):**
+     - Compiled standalone executable `engine/meridian_engine` with `engine/src/main.cpp` and `engine/src/order_book.cpp`.
+     - Updated `.github/workflows/ci.yml` `cpp-build-and-test` job to compile `meridian_engine`, run CLI line-protocol smoke test, and execute `tests/cpp_bridge.test.ts`.
+  5. **P1 Hardened IPC Bridge with Request-Response Correlation (`REQ-INT-01`, `REQ-INT-04`):**
+     - Rewrote `backend/services/cppEngineBridge.ts` replacing naive FIFO queue with request correlation maps (`pendingOrders`, `pendingCancels`, `pendingSnapshots`).
+     - Added 5s timeout safeguards, full Level 2 snapshot parsing (`bids` and `asks`), process lifecycle cleanup, and native Windows executable detection before WSL fallback.
+     - Verified with 6-step test suite in `tests/cpp_bridge.test.ts`: **6/6 passed**.
+  6. **P2 Database Concurrency, Row-Locking & Financial Parity Verification (`REQ-TEST-04`):**
+     - Implemented `ExecutionMutex` in `TradingService` to guarantee strict sequential price-time determinism and eliminate ID allocation race conditions (`MAX(order_id) + 1`).
+     - Created `tests/concurrency.test.ts`: fired 10 concurrent async BUY orders (10 shares each) against a resting 50-share SELL order.
+     - Invariant verification: exactly 50 shares filled (zero overfills), exactly 1 BUY fill and 1 SELL fill per trade, double-entry cash balance conservation ($70,000 debit == $70,000 credit), and position parity (+50 vs -50). **All passed**.
+  7. **P3 Documentation Truthfulness Reconciliation (`REQ-CPP-04`):**
+     - Reconciled `README.md`, `docs/ARCHITECTURE.md`, `docs/PERFORMANCE_REPORT.md`, `docs/FINAL_RELEASE_AUDIT.md`, and `docs/RELEASE_NOTES.md`.
+     - Eliminated all false claims of intrusive memory pools and zero dynamic allocation on order book fast path; accurately documented `std::map<Price, std::list<Order>>`.
+     - Explicitly documented PostgreSQL `DATABASE` mode as the sole production-authoritative matching engine.
+

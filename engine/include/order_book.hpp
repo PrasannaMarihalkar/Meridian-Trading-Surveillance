@@ -14,7 +14,7 @@ public:
     explicit OrderBook(InstrumentId instrument_id, Price tick_size = 500); // 500 = 0.0500 in fixed-point
 
     // Process incoming order: match or rest on book. Returns generated trade executions.
-    std::vector<Trade> process_order(Order order);
+    std::vector<Trade> process_order(Order& order);
 
     // Cancel a resting order
     bool cancel_order(OrderId order_id);
