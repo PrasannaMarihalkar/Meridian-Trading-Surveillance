@@ -1,0 +1,36 @@
+# Node & Dependencies
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment & Credentials
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Database Data Dir
+database/pgdata/
+*.db
+*.sqlite
+
+# C++ Build & Binaries
+engine/build/
+engine/bin/
+*.exe
+*.o
+*.a
+*.so
+*.dll
+engine/test_order_book
+engine/benchmark_engine
+engine/meridian_engine
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

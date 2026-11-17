@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  meridian-db:
+    image: postgres:16-alpine
+    container_name: meridian_db
+    restart: always
+    environment:
+      POSTGRES_DB: meridian_db
+      POSTGRES_USER: meridian_user
+      POSTGRES_PASSWORD: meridian_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/sql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - ./database/sql/02_views_triggers.sql:/docker-entrypoint-initdb.d/02_views_triggers.sql
+      - ./database/sql/03_seed_data.sql:/docker-entrypoint-initdb.d/03_seed_data.sql
+
+  meridian-app:
+    build: .
+    container_name: meridian_app
+    restart: always
+    depends_on:
+      - meridian-db
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      DATABASE_URL: postgresql://meridian_user:meridian_password@meridian-db:5432/meridian_db
+      JWT_SECRET: production-secret-key-replace-in-env
+    ports:
+      - "4000:4000"
+
+volumes:
+  pgdata:

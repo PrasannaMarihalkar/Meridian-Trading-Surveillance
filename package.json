@@ -1,0 +1,53 @@
+{
+  "name": "meridian",
+  "version": "1.0.0",
+  "description": "High-Performance Order Matching Engine with Multi-Paradigm Persistence and Market Surveillance",
+  "main": "backend/server.ts",
+  "scripts": {
+    "start": "tsx backend/server.ts",
+    "dev": "tsx backend/server.ts",
+    "test": "tsx tests/api.test.ts",
+    "db:init": "tsx scripts/init_db.ts",
+    "demo:queries": "tsx scripts/run_demo_queries.ts",
+    "build:frontend": "tsx scripts/build_frontend.ts"
+  },
+  "keywords": [
+    "trading",
+    "matching-engine",
+    "surveillance",
+    "postgresql",
+    "bcnf",
+    "experiential-learning",
+    "pes-university"
+  ],
+  "author": "Prasanna Marihalkar <prasannacm.in@email.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@electric-sql/pglite": "^0.2.16",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "esbuild": "^0.28.2",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^1.16.0",
+    "pg": "^8.13.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ws": "^8.18.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/node": "^22.13.9",
+    "@types/pg": "^8.11.11",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
