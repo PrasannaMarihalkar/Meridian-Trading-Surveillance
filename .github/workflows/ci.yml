@@ -88,11 +88,8 @@ jobs:
           path: node_modules
           key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
-      - name: Install ESLint and TypeScript ESLint plugin
-        run: npm install --no-save eslint@8.57.0 @typescript-eslint/parser@6.21.0 @typescript-eslint/eslint-plugin@6.21.0
-
-      - name: Run ESLint on backend
-        run: npx eslint backend/ --ext .ts --max-warnings 50
+      - name: Run ESLint on backend (zero warnings tolerated)
+        run: npm run lint
 
   # ─────────────────────────────────────────────────────────────────
   # Job 4: Database schema validation (PGlite, no external DB needed)
@@ -209,7 +206,7 @@ jobs:
 
       - name: Build C++ engine and test binary
         run: |
-          g++ -std=c++20 -O2 -pthread \
+          g++ -std=c++20 -O2 -Wall -Wextra -pthread \
             -Iengine/include \
             engine/src/order_book.cpp \
             engine/tests/test_order_book.cpp \
@@ -218,14 +215,14 @@ jobs:
       - name: Run C++ order book tests
         run: ./test_ob
 
-      - name: Build with AddressSanitizer (optional, non-blocking)
+      - name: Build and execute with AddressSanitizer and UndefinedBehaviorSanitizer (blocking)
         run: |
-          g++ -std=c++20 -O1 -fsanitize=address,undefined -pthread \
+          g++ -std=c++20 -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -pthread \
             -Iengine/include \
             engine/src/order_book.cpp \
             engine/tests/test_order_book.cpp \
-            -o test_ob_asan && ./test_ob_asan
-        continue-on-error: true
+            -o test_ob_asan
+          ./test_ob_asan
 
   # ─────────────────────────────────────────────────────────────────
   # Job 8: Secret scanning
@@ -239,14 +236,11 @@ jobs:
         with:
           fetch-depth: 0  # Full history for TruffleHog
 
-      - name: TruffleHog secret scan
-        uses: trufflesecurity/trufflehog@main
+      - name: TruffleHog full-history secret scan
+        uses: trufflesecurity/trufflehog@v3.88.15
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
-          extra_args: --debug --only-verified
-        continue-on-error: true  # Non-blocking for college project; remove for production
+          extra_args: --only-verified
 
       - name: Grep for common hardcoded secrets (always runs)
         run: |
@@ -295,9 +289,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: Run npm audit (high severity only)
+      - name: Run npm audit (high severity threshold)
         run: npm audit --audit-level=high
-        continue-on-error: true  # Remove for stricter security in production
 
   # ─────────────────────────────────────────────────────────────────
   # Final gate: all jobs must pass
@@ -306,6 +299,7 @@ jobs:
     name: CI Gate (All Checks Pass)
     runs-on: ubuntu-latest
     needs:
+      - dependency-install
       - type-check
       - lint
       - db-schema-validate
@@ -316,10 +310,19 @@ jobs:
       - npm-audit
     if: always()
     steps:
-      - name: Check all jobs passed
+      - name: Verify all mandatory CI jobs succeeded
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "One or more CI jobs failed!"
+          RESULTS="${{ join(needs.*.result, ' ') }}"
+          echo "Job results: $RESULTS"
+          FAILED=0
+          for res in $RESULTS; do
+            if [ "$res" != "success" ]; then
+              echo "Error: Job result was '$res' (expected 'success')"
+              FAILED=1
+            fi
+          done
+          if [ $FAILED -ne 0 ]; then
+            echo "CI Gate Failed: One or more prerequisite jobs did not succeed."
             exit 1
           fi
-          echo "All CI checks passed!"
+          echo "All CI checks succeeded!"
