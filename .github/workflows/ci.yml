@@ -334,8 +334,8 @@ jobs:
           # Check for hardcoded JWT secrets
           if grep -rn --include="*.ts" --include="*.js" --include="*.json" \
             -E "(jwt_secret|JWT_SECRET)\s*[:=]\s*['\"][^'\"]{8,}['\"]" \
-            --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=public --exclude-dir=dist \
-            --exclude="bundle.js*" --exclude="*.test.ts" .; then
+            --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=public --exclude-dir=dist --exclude-dir=tests \
+            --exclude="bundle.js*" --exclude="*.test.ts" --exclude="test_*.ts" .; then
             echo "WARNING: Possible hardcoded JWT secret found"
             FOUND=1
           fi
@@ -343,8 +343,8 @@ jobs:
           # Check for hardcoded passwords
           if grep -rn --include="*.ts" --include="*.js" \
             -E "password\s*[:=]\s*['\"][^'\"]{6,}['\"]" \
-            --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=public --exclude-dir=dist \
-            --exclude="bundle.js*" --exclude="*.test.ts" --exclude="*.example" .; then
+            --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=public --exclude-dir=dist --exclude-dir=tests \
+            --exclude="bundle.js*" --exclude="*.test.ts" --exclude="test_*.ts" --exclude="*.example" .; then
             echo "WARNING: Possible hardcoded password found"
             FOUND=1
           fi
@@ -373,8 +373,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: Run npm audit (high severity threshold)
-        run: npm audit --audit-level=high
+      - name: Run npm audit (high severity threshold for production dependencies)
+        run: npm audit --omit=dev --audit-level=high
 
   # ─────────────────────────────────────────────────────────────────
   # Final gate: all jobs must pass

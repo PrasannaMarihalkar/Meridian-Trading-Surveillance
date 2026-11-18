@@ -433,27 +433,42 @@ async function run() {
     const wsTrader = new WebSocket(`ws://127.0.0.1:${port}/ws?ticket=${traderTicketRes.body.ticket}`);
     const wsAnalyst = new WebSocket(`ws://127.0.0.1:${port}/ws?ticket=${analystTicketRes.body.ticket}`);
 
-    await Promise.all([
-      new Promise<void>((resolve) => wsTrader.on('open', () => resolve())),
-      new Promise<void>((resolve) => wsAnalyst.on('open', () => resolve()))
-    ]);
-
     let traderGotAlert = false;
     let analystGotAlert = false;
 
-    wsTrader.on('message', (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === 'SURVEILLANCE_ALERT') traderGotAlert = true;
-      } catch {}
-    });
-
-    wsAnalyst.on('message', (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === 'SURVEILLANCE_ALERT') analystGotAlert = true;
-      } catch {}
-    });
+    // Await authoritative ticket consumption and role resolution confirmation (CONNECTION_ACK)
+    await Promise.all([
+      new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Trader socket timed out waiting for authenticated CONNECTION_ACK')), 5000);
+        wsTrader.on('message', (data) => {
+          try {
+            const msg = JSON.parse(data.toString());
+            if (msg.type === 'CONNECTION_ACK' && msg.authenticated) {
+              clearTimeout(timer);
+              resolve();
+            } else if (msg.type === 'SURVEILLANCE_ALERT') {
+              traderGotAlert = true;
+            }
+          } catch {}
+        });
+        wsTrader.on('error', reject);
+      }),
+      new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Analyst socket timed out waiting for authenticated CONNECTION_ACK')), 5000);
+        wsAnalyst.on('message', (data) => {
+          try {
+            const msg = JSON.parse(data.toString());
+            if (msg.type === 'CONNECTION_ACK' && msg.authenticated) {
+              clearTimeout(timer);
+              resolve();
+            } else if (msg.type === 'SURVEILLANCE_ALERT') {
+              analystGotAlert = true;
+            }
+          } catch {}
+        });
+        wsAnalyst.on('error', reject);
+      })
+    ]);
 
     const { broadcastSurveillanceAlert } = await import('../backend/websocket.js');
     broadcastSurveillanceAlert({ alertId: 99999, pattern: 'TEST_ALERT', severity: 'HIGH' });
