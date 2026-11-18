@@ -24998,9 +24998,20 @@
       let ws;
       try {
         ws = new WebSocket(wsUrl);
-        ws.onopen = () => {
+        ws.onopen = async () => {
           setWsConnected(true);
           console.log("[WS] Connected to live exchange stream");
+          const token = getStoredToken();
+          if (token) {
+            try {
+              const ticketRes = await apiRequest("/auth/ws-ticket", { method: "POST" });
+              if (ticketRes?.ticket) {
+                ws.send(JSON.stringify({ type: "AUTH_TICKET", ticket: ticketRes.ticket }));
+              }
+            } catch (e) {
+              console.warn("[WS] Failed to authenticate with single-use ticket:", e);
+            }
+          }
         };
         ws.onclose = () => {
           setWsConnected(false);
@@ -25008,14 +25019,28 @@
         ws.onerror = () => {
           setWsConnected(false);
         };
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === "SESSION_REVOKED") {
+              clearStoredToken();
+              setUser(null);
+            }
+          } catch {
+          }
+        };
       } catch (err) {
         setWsConnected(false);
       }
       return () => {
         if (ws) ws.close();
       };
-    }, []);
-    const handleLogout = () => {
+    }, [user?.userId]);
+    const handleLogout = async () => {
+      try {
+        await apiRequest("/auth/logout", { method: "POST" });
+      } catch {
+      }
       clearStoredToken();
       setUser(null);
     };

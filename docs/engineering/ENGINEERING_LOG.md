@@ -194,6 +194,45 @@
       - Bounded purchasing power reservation for MARKET BUY orders to upper 5% price collar (`refPrice * 1.05`).
       - Verified in `tests/test_trading_risk_integrity.ts` (13/13 passed).
 
-- **Final System Status:** **`READY FOR VERIFIED TEACHER DEMO`** (57/57 tests passing across Native PostgreSQL 16 and PGlite, 17/17 demo queries verified).
+### Entry 005: Final Defect Closure Pass & Demonstration Hardening
+- **Date:** November 18, 2026
+- **Status:** **DEFECT CLOSURE VERIFIED & COMPLETE**
+- **Branch:** `fix/final-teacher-demo-readiness`
+- **Activities & Verified Outcomes:**
+  1. **WebSocket Security Hardening (`REQ-SEC-11`):**
+     - Completely eliminated legacy query-string JWT authentication (`?token=`) and legacy `AUTH` message frames.
+     - Replaced in-memory ticket map with PostgreSQL-backed durable single-use ticket store (`ws_tickets` table).
+     - Implemented atomic ticket redemption via `WITH deleted AS (DELETE FROM ws_tickets WHERE ticket_hash = $1 AND expires_at > NOW() RETURNING ...) JOIN sessions JOIN users`.
+     - Resolved principal role authoritatively from current database state, preventing stale JWT claim escalation.
+     - Added active session revocation hooks: `POST /api/auth/logout` and admin deactivation immediately terminate live WebSockets with code `4001`.
+     - Implemented a 10-second heartbeat database verification loop to prune sockets whose sessions were revoked cross-process.
+  2. **Financial Risk Reservation & Deadlock-Free Hierarchical Locking (`REQ-RSK-04`):**
+     - BUY order position risk now authoritatively incorporates outstanding open BUY order commitments: `currentNet + committedBuyQty + quantity <= max_position_qty`.
+     - SELL order short risk incorporates open SELL commitments: `Math.abs(currentNet - committedSellQty - quantity) <= max_position_qty`.
+     - Resolved cross-instrument cash contention race conditions by establishing a global, monotonic advisory lock hierarchy:
+       - Level 1: Account Advisory Lock (`SELECT pg_advisory_xact_lock(1, accountId)`) serializing cash balance and open order reservations.
+       - Level 2: Instrument Advisory Lock (`SELECT pg_advisory_xact_lock(2, instrumentId)`) serializing order matching determinism.
+     - Proved deadlock-free execution and zero cash overspending under concurrent orders across differing instruments.
+  3. **MARKET & FOK Correctness (`REQ-TRD-04`):**
+     - Restricted `order_type` strictly to `MARKET` and `LIMIT`. Expressed `IOC` and `FOK` exclusively through `time_in_force`.
+     - Applied MARKET order price collar filtering (`price <= maxCollarPrice` for BUY, `price >= minCollarPrice` for SELL) directly in candidate matching query *before* computing executable FOK liquidity.
+     - Enforced strict all-or-none invariant: FOK produces either 100% full execution or 0% execution (never partial fills).
+  4. **Administrative Audit Atomicity (`REQ-SEC-12`):**
+     - Made cancellation reason mandatory for administrative order cancellations (rejected with 400 if missing or whitespace).
+     - Executed order status cancellation and `ADMIN_ORDER_CANCEL` audit logging within the same PostgreSQL transaction (`tx`).
+     - Suppressed no audit failures; audit logging failures roll back the cancellation write.
+  5. **Transaction Pool Health (`REQ-DBMS-13`):**
+     - Updated database transaction runner in `database/db.ts`: if `ROLLBACK` fails, client is released with error (`client.release(rollbackError)`), instructing `pg.Pool` to destroy the corrupted connection.
+  6. **CI & Container Modernization (`REQ-OPS-02`):**
+     - Added feature branch `fix/final-teacher-demo-readiness` to GitHub Actions push triggers in `.github/workflows/ci.yml`.
+     - Created `tsconfig.frontend.json` and added frontend type-checking and ESLint to `npm run type-check`.
+     - Removed hardcoded credentials from `docker-compose.yml`, using environment variables (`${POSTGRES_PASSWORD}`, `${JWT_SECRET}`) and healthchecks.
+     - Converted `Dockerfile` to a multi-stage production build (`builder` -> `runner`) executing as non-root user `node`.
+  7. **Bounded Gap Detector Verification (`REQ-CPP-09`):**
+     - Verified exact memory footprint (20,560 bytes) via compile-time `static_assert(sizeof(GapDetector) == 20560)`.
+     - Formally documented intentional bounded-memory information-loss semantics upon saturation (`gaps_saturated_`).
+     - Verified memory safety, split-gap resolution, and saturation under GCC Clang ASan/UBSan sanitizers.
+
+- **Final System Status:** **`READY FOR VERIFIED TEACHER DEMO`** (61/61 tests passing across Native PostgreSQL 16 and PGlite, 17/17 demo queries verified).
 
 

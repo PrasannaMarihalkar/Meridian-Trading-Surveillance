@@ -1,6 +1,6 @@
 export type UserRole = 'TRADER' | 'ANALYST' | 'ADMIN';
 export type OrderSide = 'BUY' | 'SELL';
-export type OrderType = 'MARKET' | 'LIMIT' | 'IOC';
+export type OrderType = 'MARKET' | 'LIMIT';
 export type TimeInForce = 'DAY' | 'GTC' | 'IOC' | 'FOK';
 export type OrderStatus = 'OPEN' | 'PARTIALLY_FILLED' | 'FILLED' | 'CANCELLED' | 'REJECTED';
 export type AlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';

@@ -14,7 +14,7 @@ const PlaceOrderSchema = z.object({
   accountId: z.number().int().positive().optional(),
   instrumentId: z.number().int().positive(),
   side: z.enum(['BUY', 'SELL']),
-  orderType: z.enum(['LIMIT', 'MARKET', 'IOC']),
+  orderType: z.enum(['LIMIT', 'MARKET']),
   timeInForce: z.enum(['DAY', 'GTC', 'IOC', 'FOK']).optional(),
   price: z.number().nonnegative(),
   quantity: z.number().int().positive(),
@@ -154,31 +154,26 @@ router.post('/:id/cancel', authenticate, async (req: AuthenticatedRequest, res: 
 
     const targetAccountId = parseInt(orderRes.rows[0].account_id, 10);
     const userRole = req.user?.role;
-    let adminAuditReason: string | undefined;
+    let adminAudit: { actorUserId: number; reason: string } | undefined;
+
     if (userRole === 'ADMIN') {
-      adminAuditReason = (typeof req.body?.reason === 'string' && req.body.reason.trim())
-        ? req.body.reason.trim()
-        : 'Administrative order cancellation by system administrator';
+      const reason = req.body?.reason;
+      if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+        res.status(400).json({ error: 'Administrative cancellation requires a non-empty reason' });
+        return;
+      }
+      adminAudit = {
+        actorUserId: req.user!.userId,
+        reason: reason.trim()
+      };
     } else if (userRole === 'TRADER' && req.user?.accountId === targetAccountId) {
-      // Trader is authorized to cancel their own order
+      // Trader is authorized to cancel their own order without admin audit record
     } else {
       res.status(403).json({ error: 'Forbidden: Insufficient permissions to cancel order' });
       return;
     }
 
-    const cancelledOrder = await TradingService.cancelOrder(orderId, targetAccountId);
-
-    if (userRole === 'ADMIN' && adminAuditReason) {
-      try {
-        await db.query(
-          `INSERT INTO audit_log (audit_id, occurred_at, actor_user_id, action, entity_type, entity_id, new_data)
-           VALUES (nextval('audit_log_id_seq'), NOW(), $1, 'ADMIN_ORDER_CANCEL', 'orders', $2, $3::JSONB)`,
-          [req.user?.userId, String(orderId), JSON.stringify({ reason: adminAuditReason, order_id: orderId })]
-        );
-      } catch (auditErr) {
-        console.warn('[AUDIT_LOG] Failed to record admin cancellation audit event:', auditErr);
-      }
-    }
+    const cancelledOrder = await TradingService.cancelOrder(orderId, targetAccountId, adminAudit);
     res.json({ message: 'Order cancelled successfully', order: cancelledOrder });
   } catch (err) {
     res.status(400).json({ error: getErrorMessage(err) });

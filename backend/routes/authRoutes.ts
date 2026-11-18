@@ -3,6 +3,7 @@ import { AuthService } from '../services/authService';
 import { authenticate, requireRole, AuthenticatedRequest } from '../middleware/auth';
 import { getDatabase } from '../../database/db';
 import { wsTicketManager } from '../services/wsTicketManager';
+import { revokeWsSession, revokeWsUser } from '../websocket';
 import { z } from 'zod';
 
 const router = Router();
@@ -86,6 +87,30 @@ router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response)
   }
 });
 
+// Admin: Deactivate/activate user and revoke live sessions
+router.patch('/users/:id/status', authenticate, requireRole('ADMIN'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const targetUserId = parseInt(req.params.id as string, 10);
+    const { isActive } = z.object({ isActive: z.boolean() }).parse(req.body);
+    const db = await getDatabase();
+    const result = await db.query(
+      'UPDATE users SET is_active = $1 WHERE user_id = $2 RETURNING user_id, username, is_active',
+      [isActive, targetUserId]
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    if (!isActive) {
+      await db.query('DELETE FROM sessions WHERE user_id = $1', [targetUserId]);
+      revokeWsUser(targetUserId);
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: getErrorMessage(err) });
+  }
+});
+
 // Issue Short-Lived Single-Use WebSocket Ticket
 router.post('/ws-ticket', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -93,7 +118,7 @@ router.post('/ws-ticket', authenticate, async (req: AuthenticatedRequest, res: R
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    const ticket = wsTicketManager.issueTicket(req.user, 30000);
+    const ticket = await wsTicketManager.issueTicket(req.user, 30000);
     res.json({ ticket, expiresIn: 30 });
   } catch (err) {
     res.status(500).json({ error: getErrorMessage(err) || 'Failed to issue WebSocket ticket' });
@@ -105,6 +130,7 @@ router.post('/logout', authenticate, async (req: AuthenticatedRequest, res: Resp
     if (req.user?.sessionId) {
       const db = await getDatabase();
       await db.query('DELETE FROM sessions WHERE session_id = $1', [req.user.sessionId]);
+      revokeWsSession(req.user.sessionId);
       try {
         await db.query(
           `INSERT INTO audit_log (occurred_at, actor_user_id, action, entity_type, entity_id, new_data)

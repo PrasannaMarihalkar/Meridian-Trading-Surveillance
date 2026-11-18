@@ -68,6 +68,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_agent TEXT
 );
 
+-- Table: ws_tickets (PostgreSQL-backed single-use WebSocket authentication tickets)
+CREATE TABLE IF NOT EXISTS ws_tickets (
+    ticket_hash TEXT PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    session_id UUID NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    account_id BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ws_tickets_expires_at ON ws_tickets(expires_at);
+
 -- Table 3: accounts
 CREATE TABLE IF NOT EXISTS accounts (
     account_id BIGINT PRIMARY KEY DEFAULT nextval('account_id_seq'),

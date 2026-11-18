@@ -16,7 +16,8 @@
     "test:bridge": "tsx tests/cpp_bridge.test.ts",
     "test:all": "tsx tests/test_transaction_affinity.ts && tsx tests/test_auth_rbac_hardening.ts && tsx tests/test_trading_risk_integrity.ts && tsx tests/api.test.ts && tsx tests/concurrency.test.ts && tsx tests/cpp_bridge.test.ts",
     "lint": "eslint backend/ --max-warnings 0",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit && tsc --project tsconfig.frontend.json --noEmit",
+    "type-check:frontend": "tsc --project tsconfig.frontend.json --noEmit",
     "db:init": "tsx scripts/init_db.ts",
     "demo:queries": "tsx scripts/run_demo_queries.ts",
     "build:frontend": "tsx scripts/build_frontend.ts"

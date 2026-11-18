@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { apiRequest, clearStoredToken } from './api';
+import { apiRequest, clearStoredToken, getStoredToken } from './api';
 import { TradingTerminal } from './components/TradingTerminal';
 import { SurveillanceConsole } from './components/SurveillanceConsole';
 import { SystemAudit } from './components/SystemAudit';
@@ -33,15 +33,35 @@ export function App() {
     let ws: WebSocket;
     try {
       ws = new WebSocket(wsUrl);
-      ws.onopen = () => {
+      ws.onopen = async () => {
         setWsConnected(true);
         console.log('[WS] Connected to live exchange stream');
+        const token = getStoredToken();
+        if (token) {
+          try {
+            const ticketRes = await apiRequest<{ ticket: string }>('/auth/ws-ticket', { method: 'POST' });
+            if (ticketRes?.ticket) {
+              ws.send(JSON.stringify({ type: 'AUTH_TICKET', ticket: ticketRes.ticket }));
+            }
+          } catch (e) {
+            console.warn('[WS] Failed to authenticate with single-use ticket:', e);
+          }
+        }
       };
       ws.onclose = () => {
         setWsConnected(false);
       };
       ws.onerror = () => {
         setWsConnected(false);
+      };
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'SESSION_REVOKED') {
+            clearStoredToken();
+            setUser(null);
+          }
+        } catch {}
       };
     } catch (err) {
       setWsConnected(false);
@@ -50,9 +70,12 @@ export function App() {
     return () => {
       if (ws) ws.close();
     };
-  }, []);
+  }, [user?.userId]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await apiRequest('/auth/logout', { method: 'POST' });
+    } catch {}
     clearStoredToken();
     setUser(null);
   };

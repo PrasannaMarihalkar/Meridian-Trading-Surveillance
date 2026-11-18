@@ -80,6 +80,7 @@ export async function getDatabase(): Promise<IDatabase> {
        */
       async transaction<T>(fn: (tx: ITransactionClient) => Promise<T>): Promise<T> {
         const client = await pool.connect();
+        let rollbackError: any = null;
         try {
           await client.query('BEGIN');
           const txClient: ITransactionClient = {
@@ -103,10 +104,15 @@ export async function getDatabase(): Promise<IDatabase> {
             await client.query('ROLLBACK');
           } catch (rbErr) {
             console.error('[DB] Rollback failed on connection:', rbErr);
+            rollbackError = rbErr;
           }
           throw err;
         } finally {
-          client.release();
+          if (rollbackError) {
+            client.release(rollbackError);
+          } else {
+            client.release();
+          }
         }
       },
       async close(): Promise<void> {

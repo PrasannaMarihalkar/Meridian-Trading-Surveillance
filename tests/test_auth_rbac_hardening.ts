@@ -397,7 +397,7 @@ async function run() {
     assert.strictEqual(assignTrader.status, 400, 'Assigning alert to TRADER must return 400');
   });
 
-  // Test 6: WebSocket Confidentiality
+  // Test 6: WebSocket Confidentiality with Single-Use Ticket Authentication
   await test('WebSocket confidentiality: TRADER never receives SURVEILLANCE_ALERT', async () => {
     const analystLogin = await makeRequest({
       hostname: '127.0.0.1',
@@ -411,8 +411,27 @@ async function run() {
     });
     const analystToken = analystLogin.body.token;
 
-    const wsTrader = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${traderToken}`);
-    const wsAnalyst = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${analystToken}`);
+    // Obtain single-use tickets for Trader and Analyst
+    const traderTicketRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/auth/ws-ticket',
+      method: 'POST',
+      headers: { Authorization: `Bearer ${traderToken}` }
+    });
+    assert.strictEqual(traderTicketRes.status, 200);
+
+    const analystTicketRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/auth/ws-ticket',
+      method: 'POST',
+      headers: { Authorization: `Bearer ${analystToken}` }
+    });
+    assert.strictEqual(analystTicketRes.status, 200);
+
+    const wsTrader = new WebSocket(`ws://127.0.0.1:${port}/ws?ticket=${traderTicketRes.body.ticket}`);
+    const wsAnalyst = new WebSocket(`ws://127.0.0.1:${port}/ws?ticket=${analystTicketRes.body.ticket}`);
 
     await Promise.all([
       new Promise<void>((resolve) => wsTrader.on('open', () => resolve())),
@@ -518,6 +537,110 @@ async function run() {
     const authResult3 = await authPromise3;
     assert.strictEqual(authResult3.type, 'AUTH_ERROR', 'Bogus ticket must be rejected');
     ws3.close();
+
+    // 7e. Legacy Query Param Rejection: Connecting with ?token= leaves connection unauthenticated
+    const ws4 = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${traderToken}`);
+    const ackPromise4 = new Promise<any>((resolve) => {
+      ws4.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'CONNECTION_ACK') resolve(msg);
+        } catch {}
+      });
+    });
+    const ackResult4 = await ackPromise4;
+    assert.strictEqual(ackResult4.authenticated, false, 'Legacy ?token= must NOT authenticate WebSocket');
+    assert.strictEqual(ackResult4.role, 'ANONYMOUS');
+
+    // 7f. Legacy AUTH Frame Rejection: Sending raw JWT frame is rejected with error
+    const authPromise4 = new Promise<any>((resolve) => {
+      ws4.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'AUTH_ERROR') resolve(msg);
+        } catch {}
+      });
+    });
+    ws4.send(JSON.stringify({ type: 'AUTH', token: traderToken }));
+    const authResult4 = await authPromise4;
+    assert.strictEqual(authResult4.type, 'AUTH_ERROR', 'Legacy AUTH frame must be rejected');
+    assert(authResult4.error.includes('Direct JWT frame authentication is deprecated and disabled'));
+    ws4.close();
+
+    // 7g. Expired Ticket Rejection: Expired ticket in database must be rejected
+    const expiredTicketRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/auth/ws-ticket',
+      method: 'POST',
+      headers: { Authorization: `Bearer ${traderToken}` }
+    });
+    const expiredRaw = expiredTicketRes.body.ticket;
+    // Fast-forward expiration in database
+    const cryptoMod = await import('crypto');
+    const expHash = cryptoMod.createHash('sha256').update(expiredRaw).digest('hex');
+    await db.query(`UPDATE ws_tickets SET expires_at = NOW() - INTERVAL '10 seconds' WHERE ticket_hash = $1`, [expHash]);
+
+    const ws5 = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise<void>((resolve) => ws5.on('open', () => resolve()));
+    const authPromise5 = new Promise<any>((resolve) => {
+      ws5.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'AUTH_SUCCESS' || msg.type === 'AUTH_ERROR') resolve(msg);
+        } catch {}
+      });
+    });
+    ws5.send(JSON.stringify({ type: 'AUTH_TICKET', ticket: expiredRaw }));
+    const authResult5 = await authPromise5;
+    assert.strictEqual(authResult5.type, 'AUTH_ERROR', 'Expired ticket must be rejected');
+    ws5.close();
+
+    // 7h. Session Revocation Closes Connected Socket
+    const freshLogin = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/auth/login',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      identifier: 'prasanna_trader',
+      password: 'Password123!'
+    });
+    const sessionToken = freshLogin.body.token;
+
+    const freshTicketRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/auth/ws-ticket',
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}` }
+    });
+    const freshTicket = freshTicketRes.body.ticket;
+
+    const ws6 = new WebSocket(`ws://127.0.0.1:${port}/ws?ticket=${freshTicket}`);
+    await new Promise<void>((resolve) => ws6.on('open', () => resolve()));
+
+    let closedCode = 0;
+    let closedReason = '';
+    ws6.on('close', (code, reason) => {
+      closedCode = code;
+      closedReason = reason.toString();
+    });
+
+    // Revoke session via logout
+    await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/auth/logout',
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}` }
+    });
+
+    // Wait for socket termination
+    await new Promise((r) => setTimeout(r, 200));
+    assert.strictEqual(closedCode, 4001, 'Revoking session must close socket with code 4001');
+    assert.strictEqual(closedReason, 'Session revoked');
   });
 
   // Test 8: Order Submission RBAC: Analyst is explicitly prohibited from submitting orders
@@ -618,6 +741,62 @@ async function run() {
     );
     assert.strictEqual(auditRes.rows.length, 1, 'Admin cancellation audit log entry must exist');
     assert.strictEqual(auditRes.rows[0].new_data.reason, reasonText);
+
+    // 9e. Admin cancellation without reason MUST be rejected with 400
+    const orderUuid2 = randomUUID();
+    const placeRes2 = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/orders',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${traderToken}`,
+        'Idempotency-Key': orderUuid2
+      }
+    }, {
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1350.00,
+      quantity: 5,
+      clientOrderId: orderUuid2
+    });
+    assert.strictEqual(placeRes2.status, 201);
+    const orderId2 = placeRes2.body.order.order_id;
+
+    const noReasonCancel = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: `/api/orders/${orderId2}/cancel`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      }
+    }, {});
+    assert.strictEqual(noReasonCancel.status, 400, 'Admin cancel without reason must return 400');
+    assert(noReasonCancel.body.error.includes('requires a non-empty reason'));
+
+    // 9f. Trader cancelling own order does NOT require admin reason and does NOT create ADMIN_ORDER_CANCEL audit entry
+    const traderCancel = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: `/api/orders/${orderId2}/cancel`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${traderToken}`
+      }
+    });
+    assert.strictEqual(traderCancel.status, 200, 'Trader cancel own order succeeds');
+
+    const auditRes2 = await db.query(
+      `SELECT * FROM audit_log WHERE entity_id = $1 AND action = 'ADMIN_ORDER_CANCEL'`,
+      [String(orderId2)]
+    );
+    assert.strictEqual(auditRes2.rows.length, 0, 'Trader cancellation must NOT create ADMIN_ORDER_CANCEL entry');
   });
 
   console.log(`\n=== RESULTS: ${passed} PASSED, ${failed} FAILED ===\n`);
@@ -627,6 +806,7 @@ async function run() {
   if (failed > 0) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 run().catch((err) => {

@@ -140,22 +140,6 @@ export class TradingService {
       throw new Error(`Order notional value ${notional.toFixed(2)} exceeds account max notional limit of ${acc.max_order_notional}`);
     }
 
-    // Max Net Position Quantity Check
-    if (acc.max_position_qty) {
-      const maxPos = parseInt(acc.max_position_qty, 10);
-      const posRes = await db.query(
-        `SELECT net_qty FROM positions WHERE account_id = $1 AND instrument_id = $2`,
-        [params.accountId, params.instrumentId]
-      );
-      const currentNet = posRes.rows.length > 0 ? parseInt(posRes.rows[0].net_qty, 10) : 0;
-      const projectedNet = params.side === 'BUY' ? (currentNet + params.quantity) : (currentNet - params.quantity);
-      if (Math.abs(projectedNet) > maxPos) {
-        throw new Error(
-          `Projected position (${projectedNet}) exceeds account maximum position limit of ${maxPos}`
-        );
-      }
-    }
-
     // Price Collar Check
     if (params.orderType !== 'MARKET' && acc.price_collar_pct) {
       const diffPct = Math.abs((params.price - refPrice) / refPrice) * 100;
@@ -178,8 +162,29 @@ export class TradingService {
       }
     }
 
-    // Cash check for BUY orders with reserved purchasing power calculation
+    // Buy position commitment and cash check
     if (params.side === 'BUY') {
+      const maxPos = acc.max_position_qty ? parseInt(acc.max_position_qty, 10) : 5000;
+      const posRes = await db.query(
+        `SELECT net_qty FROM positions WHERE account_id = $1 AND instrument_id = $2`,
+        [params.accountId, params.instrumentId]
+      );
+      const currentNet = posRes.rows.length > 0 ? parseInt(posRes.rows[0].net_qty, 10) : 0;
+      const openBuysRes = await db.query(
+        `SELECT COALESCE(SUM(quantity - filled_qty), 0) AS committed_qty
+         FROM orders
+         WHERE account_id = $1 AND instrument_id = $2 AND side = 'BUY' AND status IN ('OPEN', 'PARTIALLY_FILLED')`,
+        [params.accountId, params.instrumentId]
+      );
+      const committedBuyQty = parseInt(openBuysRes.rows[0].committed_qty, 10);
+      const projectedLongExposure = currentNet + committedBuyQty + params.quantity;
+      if (projectedLongExposure > maxPos) {
+        throw new Error(
+          `Projected position (${projectedLongExposure}) exceeds account maximum position limit of ${maxPos} (Current net: ${currentNet}, Open buy commitments: ${committedBuyQty})`
+        );
+      }
+
+      // Cash check for BUY orders with reserved purchasing power calculation across all instruments
       const reservedRes = await db.query(
         `SELECT COALESCE(SUM((quantity - filled_qty) * price), 0) AS reserved_cash
          FROM orders
@@ -244,7 +249,7 @@ export class TradingService {
         }
 
         // Verify payload parameters match
-        const expectedTif = input.timeInForce || (input.orderType === 'IOC' ? 'IOC' : 'DAY');
+        const expectedTif = input.timeInForce || 'DAY';
         const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
         const qtyMatches = Number(existing.quantity) === Number(input.quantity);
         const sideMatches = existing.side === input.side;
@@ -272,8 +277,11 @@ export class TradingService {
 
       try {
         await db.transaction(async (tx) => {
-          // Transaction-scoped per-instrument advisory lock guaranteeing cross-process engine serialization
-          await tx.query('SELECT pg_advisory_xact_lock($1)', [input.instrumentId]);
+          // Global deadlock-free hierarchical locking:
+          // 1. Account Advisory Lock (Namespace 1) serializing cash balance & open order reservations
+          await tx.query('SELECT pg_advisory_xact_lock(1, $1)', [input.accountId]);
+          // 2. Instrument Advisory Lock (Namespace 2) serializing order matching for the instrument
+          await tx.query('SELECT pg_advisory_xact_lock(2, $1)', [input.instrumentId]);
 
           // Pre-trade risk validation inside the transaction boundary
           await this.validateRiskLimits(input, tx);
@@ -282,7 +290,7 @@ export class TradingService {
           const oidRes = await tx.query(`SELECT nextval('order_id_seq') AS next_id`);
           const orderId = parseInt(oidRes.rows[0].next_id, 10);
 
-          const tif = input.timeInForce || (input.orderType === 'IOC' ? 'IOC' : 'DAY');
+          const tif = input.timeInForce || 'DAY';
 
           // Insert Order as OPEN
           const orderRes = await tx.query<Order>(
@@ -306,22 +314,31 @@ export class TradingService {
 
           activeOrder = orderRes.rows[0];
 
-          // Order Matching Engine Logic
+          // Candidate Orders for Matching with Pre-filtered Price Collar
           const oppositeSide: OrderSide = input.side === 'BUY' ? 'SELL' : 'BUY';
           const sortOrder = input.side === 'BUY' ? 'ASC' : 'DESC';
+
+          const instRefRes = await tx.query(`SELECT reference_price FROM instruments WHERE instrument_id = $1`, [input.instrumentId]);
+          const refPrice = parseFloat(instRefRes.rows[0].reference_price);
+          const collarLimitPct = 5.0;
+          const maxCollarPrice = refPrice * (1 + collarLimitPct / 100);
+          const minCollarPrice = refPrice * (1 - collarLimitPct / 100);
 
           let candidateSql: string;
           let candidateParams: (string | number)[];
 
           if (input.orderType === 'MARKET') {
+            const collarCondition = input.side === 'BUY' ? 'AND price <= $4' : 'AND price >= $4';
+            const collarLimitPrice = input.side === 'BUY' ? maxCollarPrice : minCollarPrice;
             candidateSql = `
               SELECT order_id, account_id, price, quantity, filled_qty, (quantity - filled_qty) AS leaves_qty
               FROM orders
               WHERE instrument_id = $1 AND side = $2 AND account_id <> $3 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND (quantity - filled_qty) > 0
+              ${collarCondition}
               ORDER BY price ${sortOrder}, submitted_at ASC, order_id ASC
               FOR UPDATE
             `;
-            candidateParams = [input.instrumentId, oppositeSide, input.accountId];
+            candidateParams = [input.instrumentId, oppositeSide, input.accountId, collarLimitPrice];
           } else {
             const priceCondition = input.side === 'BUY' ? 'AND price <= $4' : 'AND price >= $4';
             candidateSql = `
@@ -340,7 +357,7 @@ export class TradingService {
           const activeTotalQty = parseInt(String(activeOrder.quantity), 10);
           let remainingQty = activeTotalQty;
 
-          // Fill-Or-Kill (FOK) All-Or-None Validation
+          // Fill-Or-Kill (FOK) All-Or-None Validation on executable collar-compliant liquidity
           if (tif === 'FOK') {
             const availableLiquidity = candidates.rows.reduce(
               (sum, r) => sum + parseInt(String(r.leaves_qty), 10),
@@ -365,14 +382,11 @@ export class TradingService {
 
             const matchPrice = parseFloat(String(resting.price)); // Passive resting order price
 
-            // Market Order Price Collar Protection (5% deviation limit from reference price)
+            // Market Order Price Collar Guard
             if (input.orderType === 'MARKET') {
-              const instRefRes = await tx.query(`SELECT reference_price FROM instruments WHERE instrument_id = $1`, [input.instrumentId]);
-              const refPrice = parseFloat(instRefRes.rows[0].reference_price);
-              const collarLimit = refPrice * 0.05;
-              if (input.side === 'BUY' && matchPrice > refPrice + collarLimit) {
+              if (input.side === 'BUY' && matchPrice > maxCollarPrice) {
                 break;
-              } else if (input.side === 'SELL' && matchPrice < refPrice - collarLimit) {
+              } else if (input.side === 'SELL' && matchPrice < minCollarPrice) {
                 break;
               }
             }
@@ -462,14 +476,14 @@ export class TradingService {
           if (totalFilled === activeTotalQty) {
             finalStatus = 'FILLED';
           } else if (totalFilled > 0) {
-            if (tif === 'IOC' || input.orderType === 'IOC' || input.orderType === 'MARKET') {
+            if (tif === 'IOC' || input.orderType === 'MARKET') {
               finalStatus = 'CANCELLED';
               statusReason = 'IOC_RESIDUAL_CANCELLED';
             } else {
               finalStatus = 'PARTIALLY_FILLED';
             }
           } else {
-            if (tif === 'IOC' || input.orderType === 'IOC' || input.orderType === 'MARKET') {
+            if (tif === 'IOC' || input.orderType === 'MARKET') {
               finalStatus = 'CANCELLED';
               statusReason = 'IOC_UNFILLED';
             } else {
@@ -493,7 +507,7 @@ export class TradingService {
           );
           if (concurrentRes.rows.length > 0) {
             const existing = concurrentRes.rows[0];
-            const expectedTif = input.timeInForce || (input.orderType === 'IOC' ? 'IOC' : 'DAY');
+            const expectedTif = input.timeInForce || 'DAY';
             const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
             const qtyMatches = Number(existing.quantity) === Number(input.quantity);
             const sideMatches = existing.side === input.side;
@@ -544,9 +558,13 @@ export class TradingService {
   }
 
   /**
-   * Cancel Order (Atomic Transaction with Guaranteed Connection Affinity)
+   * Cancel Order (Atomic Transaction with Guaranteed Connection Affinity and Atomic Audit Logging)
    */
-  static async cancelOrder(orderId: number, accountId: number): Promise<Order> {
+  static async cancelOrder(
+    orderId: number,
+    accountId: number,
+    adminAudit?: { actorUserId: number; reason: string }
+  ): Promise<Order> {
     return matchingMutex.runExclusive(async () => {
       const db = await getDatabase();
       let cancelledOrder: Order | null = null;
@@ -573,6 +591,18 @@ export class TradingService {
         );
 
         cancelledOrder = updated.rows[0];
+
+        // Atomic administrative cancellation audit logging inside the transaction boundary
+        if (adminAudit) {
+          if (!adminAudit.reason || adminAudit.reason.trim().length === 0) {
+            throw new Error('Administrative cancellation requires a non-empty reason');
+          }
+          await tx.query(
+            `INSERT INTO audit_log (audit_id, occurred_at, actor_user_id, action, entity_type, entity_id, new_data)
+             VALUES (nextval('audit_log_id_seq'), NOW(), $1, 'ADMIN_ORDER_CANCEL', 'orders', $2, $3::JSONB)`,
+            [adminAudit.actorUserId, String(orderId), JSON.stringify({ reason: adminAudit.reason, order_id: orderId })]
+          );
+        }
       });
 
       // Real-time Order Book depth update after cancellation (after commit)

@@ -33,7 +33,12 @@ async function run() {
   );
   // Reset cash balances and risk limits for accounts 1001 and 1002
   await db.query(`UPDATE accounts SET cash_balance = 1000000.0000 WHERE account_id IN (1001, 1002)`);
-  await db.query(`UPDATE risk_limits SET max_position_qty = 5000, max_order_qty = 1000 WHERE account_id IN (1001, 1002)`);
+  await db.query(`UPDATE risk_limits SET max_position_qty = 5000, max_order_qty = 1000, price_collar_pct = 5.0 WHERE account_id IN (1001, 1002)`);
+  await db.query(`UPDATE instruments SET reference_price = 1400.00 WHERE instrument_id = 1`);
+  await db.query(`UPDATE instruments SET reference_price = 3200.00, lot_size = 1, tick_size = 0.05 WHERE instrument_id = 2`);
+  await db.query(`UPDATE instruments SET reference_price = 1500.00 WHERE instrument_id = 3`);
+  await db.query(`UPDATE instruments SET reference_price = 1650.00 WHERE instrument_id = 4`);
+  await db.query(`UPDATE instruments SET reference_price = 1150.00 WHERE instrument_id = 5`);
 
   // Test 1: Market Order Execution (Phase 2 Finding 5)
   await test('Market order matches against resting limit book without SQL parameter errors', async () => {
@@ -485,7 +490,7 @@ async function run() {
         instrumentId: 1,
         side: 'SELL',
         orderType: 'LIMIT',
-        price: 1450.00,
+        price: 1400.00, // At reference price to avoid triggering price collar first
         quantity: 500, // Exceeds max position limit of 50
         clientOrderId: randomUUID()
       });
@@ -526,6 +531,223 @@ async function run() {
 
     // Restore cash
     await db.query(`UPDATE accounts SET cash_balance = 1000000.0000 WHERE account_id = 1001`);
+  });
+
+  // Test 14: Cross-Instrument Cash Contention Serialization (Account Lock -> Instrument Lock)
+  await test('Simultaneous orders across different instruments competing for same cash are serialized and prevented from overspending', async () => {
+    // Clear open BUY orders for Account 1001
+    await db.query(`UPDATE orders SET status = 'CANCELLED' WHERE account_id = 1001 AND side = 'BUY' AND status IN ('OPEN', 'PARTIALLY_FILLED')`);
+    // Set cash to exactly $20,000
+    await db.query(`UPDATE accounts SET cash_balance = 20000.0000 WHERE account_id = 1001`);
+
+    // Instrument 1: Ref 1400. Buy 10 @ 1350 = $13,500
+    // Instrument 2: Ref 3200 (lot size 1). Buy 5 @ 3100 = $15,500
+    // Sum of notionals ($29,000) exceeds $20,000. Only one may succeed!
+    await db.query(`UPDATE instruments SET lot_size = 1 WHERE instrument_id = 2`);
+    const results = await Promise.allSettled([
+      TradingService.submitOrder({
+        accountId: 1001,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1350.00,
+        quantity: 10,
+        clientOrderId: randomUUID()
+      }),
+      TradingService.submitOrder({
+        accountId: 1001,
+        instrumentId: 2,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 3100.00,
+        quantity: 5,
+        clientOrderId: randomUUID()
+      })
+    ]);
+
+    const fulfilled = results.filter(r => r.status === 'fulfilled');
+    const rejected = results.filter(r => r.status === 'rejected');
+
+    assert.strictEqual(fulfilled.length, 1, 'Exactly one order must succeed under serialized cash check');
+    assert.strictEqual(rejected.length, 1, 'Second competing order must be rejected');
+    const rejectionReason = (rejected[0] as PromiseRejectedResult).reason;
+    assert(rejectionReason.message.includes('Insufficient available cash'), `Expected cash error, got: ${rejectionReason.message}`);
+
+    // Restore cash
+    await db.query(`UPDATE accounts SET cash_balance = 1000000.0000 WHERE account_id = 1001`);
+  });
+
+  // Test 15: Outstanding BUY order commitments included in projected position exposure
+  await test('Two resting BUY orders exceeding max_position_qty are rejected on the second submission', async () => {
+    // Restore cash for Account 1001
+    await db.query(`UPDATE accounts SET cash_balance = 1000000.0000 WHERE account_id = 1001`);
+    // Clean resting BUYs on Instrument 1
+    await db.query(`UPDATE orders SET status = 'CANCELLED' WHERE account_id = 1001 AND instrument_id = 1 AND side = 'BUY' AND status IN ('OPEN', 'PARTIALLY_FILLED')`);
+    await db.query(`UPDATE positions SET net_qty = 0 WHERE account_id = 1001 AND instrument_id = 1`);
+    await db.query(`UPDATE risk_limits SET max_position_qty = 500 WHERE account_id = 1001`);
+
+    // Order 1: BUY 300 shares @ 1350 (rests open on book)
+    const o1 = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1350.00,
+      quantity: 300,
+      clientOrderId: randomUUID()
+    });
+    assert.strictEqual(o1.order.status, 'OPEN');
+
+    // Order 2: BUY 300 shares @ 1350 (Projected = 0 net + 300 committed + 300 = 600 > 500) -> MUST FAIL!
+    let posCaught = false;
+    try {
+      await TradingService.submitOrder({
+        accountId: 1001,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1350.00,
+        quantity: 300,
+        clientOrderId: randomUUID()
+      });
+    } catch (err: any) {
+      posCaught = true;
+      assert(err.message.includes('exceeds account maximum position limit of 500'), `Unexpected error: ${err.message}`);
+    }
+    assert(posCaught, 'Must reject second BUY order that exceeds position limit when combined with resting commitments');
+
+    // Test 16: Cancelling the resting order releases the reservation immediately
+    await TradingService.cancelOrder(o1.order.order_id, 1001);
+
+    // Now Order 2 for 300 shares MUST SUCCEED because commitment was released!
+    const o2 = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1350.00,
+      quantity: 300,
+      clientOrderId: randomUUID()
+    });
+    assert.strictEqual(o2.order.status, 'OPEN', 'Order must succeed after previous commitment is cancelled');
+
+    // Clean up
+    await TradingService.cancelOrder(o2.order.order_id, 1001);
+    await db.query(`UPDATE risk_limits SET max_position_qty = 5000 WHERE account_id = 1001`);
+  });
+
+  // Test 17: MARKET Collar Filtering for FOK All-Or-None Execution
+  await test('MARKET FOK correctly filters collar liquidity: 0 fills when aggregate liquidity is outside collar, 100% fill when inside', async () => {
+    // Clear resting asks on Instrument 4 (Reference price = 1600.00, 5% upper collar = 1680.00)
+    await db.query(`UPDATE orders SET status = 'CANCELLED' WHERE instrument_id = 4 AND status IN ('OPEN', 'PARTIALLY_FILLED')`);
+    await db.query(`UPDATE instruments SET reference_price = 1600.00, max_price = 2500.00 WHERE instrument_id = 4`);
+    await db.query(`UPDATE risk_limits SET price_collar_pct = 5.0 WHERE account_id IN (1001, 1002)`);
+
+    // Place 10 shares @ 1650.00 (INSIDE 5% collar: 1650 <= 1680)
+    await TradingService.submitOrder({
+      accountId: 1002,
+      instrumentId: 4,
+      side: 'SELL',
+      orderType: 'LIMIT',
+      price: 1650.00,
+      quantity: 10,
+      clientOrderId: randomUUID()
+    });
+
+    // Directly insert 10 shares @ 1750.00 (OUTSIDE 5% collar: 1750 > 1680) into order book
+    // to simulate a resting limit order placed before a reference price drop
+    await db.query(
+      `INSERT INTO orders (order_id, client_order_id, account_id, instrument_id, side, order_type, time_in_force, price, quantity, filled_qty, status, submitted_at, updated_at)
+       VALUES (nextval('order_id_seq'), $1, 1002, 4, 'SELL', 'LIMIT', 'DAY', 1750.00, 10, 0, 'OPEN', NOW(), NOW())`,
+      [randomUUID()]
+    );
+
+    // Total book liquidity = 20 shares (10 inside collar, 10 outside collar)
+    // 17a. Incoming MARKET FOK BUY for 15 shares:
+    // Total liquidity (20) >= 15, but executable collar-compliant liquidity is only 10 (< 15)!
+    // MUST PRODUCE 0 FILLS and CANCEL (All-or-none invariant: NEVER partial fill a FOK order!)
+    const fokCollarFail = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 4,
+      side: 'BUY',
+      orderType: 'MARKET',
+      timeInForce: 'FOK',
+      price: 0,
+      quantity: 15,
+      clientOrderId: randomUUID()
+    });
+
+    assert.strictEqual(fokCollarFail.order.status, 'CANCELLED', 'FOK order must cancel when collar liquidity is insufficient');
+    assert.strictEqual(fokCollarFail.order.filled_qty, 0, 'FOK order must have exactly 0 fills');
+    assert.strictEqual(fokCollarFail.trades.length, 0, 'FOK order must have 0 trades');
+    assert.strictEqual(fokCollarFail.order.status_reason, 'FOK_UNFILLED_INSUFFICIENT_LIQUIDITY');
+
+    // 17b. Incoming MARKET FOK BUY for 10 shares:
+    // Exactly 10 shares are inside collar -> MUST FILL 100% (10 shares filled)
+    const fokCollarSuccess = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 4,
+      side: 'BUY',
+      orderType: 'MARKET',
+      timeInForce: 'FOK',
+      price: 0,
+      quantity: 10,
+      clientOrderId: randomUUID()
+    });
+
+    assert.strictEqual(fokCollarSuccess.order.status, 'FILLED', 'FOK order must fill 100% when collar liquidity is sufficient');
+    assert.strictEqual(fokCollarSuccess.order.filled_qty, 10);
+    assert.strictEqual(fokCollarSuccess.trades.length, 1);
+    assert.strictEqual(parseFloat(String(fokCollarSuccess.trades[0].price)), 1650.00);
+
+    // Clean up
+    await db.query(`UPDATE orders SET status = 'CANCELLED' WHERE instrument_id = 4 AND status IN ('OPEN', 'PARTIALLY_FILLED')`);
+    await db.query(`UPDATE instruments SET reference_price = 1650.00 WHERE instrument_id = 4`);
+  });
+
+  // Test 18: Administrative Order Cancellation Audit Atomicity & Rollback
+  await test('Administrative cancellation rolls back order status if audit log insertion fails', async () => {
+    // Place resting order
+    const restOrder = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1350.00,
+      quantity: 5,
+      clientOrderId: randomUUID()
+    });
+    assert.strictEqual(restOrder.order.status, 'OPEN');
+
+    // Attempt admin cancellation with empty reason (must throw and not cancel)
+    let auditRollbackCaught = false;
+    try {
+      await TradingService.cancelOrder(restOrder.order.order_id, 1001, {
+        actorUserId: 103, // sys_admin
+        reason: '   ' // Empty whitespace reason
+      });
+    } catch (err: any) {
+      auditRollbackCaught = true;
+      assert(err.message.includes('requires a non-empty reason'), `Unexpected: ${err.message}`);
+    }
+    assert(auditRollbackCaught, 'Admin cancel with empty reason must fail');
+
+    // Verify order remains OPEN (rolled back)
+    const checkOrder = await db.query(`SELECT status FROM orders WHERE order_id = $1`, [restOrder.order.order_id]);
+    assert.strictEqual(checkOrder.rows[0].status, 'OPEN', 'Order must remain OPEN when audit fails');
+
+    // Now cancel with valid reason
+    const validCancel = await TradingService.cancelOrder(restOrder.order.order_id, 1001, {
+      actorUserId: 103,
+      reason: 'Valid operational risk audit reason'
+    });
+    assert.strictEqual(validCancel.status, 'CANCELLED');
+
+    const auditCheck = await db.query(
+      `SELECT * FROM audit_log WHERE entity_id = $1 AND action = 'ADMIN_ORDER_CANCEL'`,
+      [String(restOrder.order.order_id)]
+    );
+    assert.strictEqual(auditCheck.rows.length, 1, 'Audit log entry must be committed atomically');
   });
 
   console.log(`\n=== RESULTS: ${passed} PASSED, ${failed} FAILED ===\n`);

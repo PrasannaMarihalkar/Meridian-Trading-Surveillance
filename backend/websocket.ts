@@ -1,9 +1,8 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer, IncomingMessage } from 'http';
-import jwt from 'jsonwebtoken';
 import { AuthTokenPayload } from './types';
-import { JWT_SECRET } from './middleware/auth';
 import { wsTicketManager } from './services/wsTicketManager';
+import { getDatabase } from '../database/db';
 
 export interface MarketBroadcastPayload {
   type: 'BOOK_UPDATE' | 'TRADE_TICK' | 'SURVEILLANCE_ALERT' | 'ORDER_UPDATE';
@@ -13,6 +12,8 @@ export interface MarketBroadcastPayload {
 
 export interface AuthenticatedWebSocket extends WebSocket {
   user?: AuthTokenPayload;
+  sessionId?: string;
+  userId?: number;
   isAlive?: boolean;
 }
 
@@ -34,12 +35,39 @@ function isAllowedOrigin(originHeader?: string): boolean {
   return false;
 }
 
-function authenticateToken(tokenStr: string): AuthTokenPayload | null {
-  try {
-    const decoded = jwt.verify(tokenStr, JWT_SECRET) as AuthTokenPayload;
-    return decoded;
-  } catch {
-    return null;
+/**
+ * Invalidate and close connected WebSockets associated with a specific session ID.
+ */
+export function revokeWsSession(sessionId: string): void {
+  if (!wssInstance) return;
+  for (const client of wssInstance.clients) {
+    const ws = client as AuthenticatedWebSocket;
+    if (ws.sessionId === sessionId) {
+      try {
+        ws.send(JSON.stringify({ type: 'SESSION_REVOKED', message: 'Session has been revoked or logged out' }));
+        ws.close(4001, 'Session revoked');
+      } catch {
+        // Socket already closed
+      }
+    }
+  }
+}
+
+/**
+ * Invalidate and close connected WebSockets associated with a specific user ID.
+ */
+export function revokeWsUser(userId: number): void {
+  if (!wssInstance) return;
+  for (const client of wssInstance.clients) {
+    const ws = client as AuthenticatedWebSocket;
+    if (ws.userId === userId) {
+      try {
+        ws.send(JSON.stringify({ type: 'USER_DEACTIVATED', message: 'User account has been deactivated' }));
+        ws.close(4002, 'User deactivated');
+      } catch {
+        // Socket already closed
+      }
+    }
   }
 }
 
@@ -58,32 +86,28 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
   });
   wssInstance = wss;
 
-  console.log('[WS] Authenticated WebSocket server initialized on path /ws');
+  console.log('[WS] Authenticated WebSocket server initialized on path /ws (Ticket-Only Auth)');
 
-  wss.on('connection', (ws: AuthenticatedWebSocket, req: IncomingMessage) => {
+  wss.on('connection', async (ws: AuthenticatedWebSocket, req: IncomingMessage) => {
     ws.isAlive = true;
 
-    // Check query string for short-lived ticket (?ticket=...) or legacy token (?token=...)
+    // Check query string strictly for short-lived single-use ticket (?ticket=...)
+    // Legacy ?token= parameter is intentionally rejected.
     try {
       const parsedUrl = new URL(req.url || '', 'http://localhost');
       const ticketQuery = parsedUrl.searchParams.get('ticket');
-      const tokenQuery = parsedUrl.searchParams.get('token');
 
-      if (ticketQuery && ticketQuery.length > 0) {
-        const user = wsTicketManager.consumeTicket(ticketQuery);
+      if (ticketQuery && ticketQuery.trim().length > 0) {
+        const user = await wsTicketManager.consumeTicket(ticketQuery.trim());
         if (user) {
           ws.user = user;
+          ws.sessionId = user.sessionId;
+          ws.userId = user.userId;
           console.log(`[WS] Client authenticated via single-use ticket: ${user.username} (${user.role})`);
-        }
-      } else if (tokenQuery && tokenQuery.length > 0) {
-        const user = authenticateToken(tokenQuery);
-        if (user) {
-          ws.user = user;
-          console.log(`[WS] Client authenticated via token query param: ${user.username} (${user.role})`);
         }
       }
     } catch {
-      // Ignore invalid URL
+      // Ignore invalid URL formatting
     }
 
     const ip = req.socket.remoteAddress;
@@ -101,7 +125,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
       ws.isAlive = true;
     });
 
-    ws.on('message', (message: string) => {
+    ws.on('message', async (message: string) => {
       try {
         const parsed = JSON.parse(message.toString());
         if (parsed.type === 'PING') {
@@ -115,9 +139,11 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
             ws.send(JSON.stringify({ type: 'AUTH_ERROR', error: 'Missing or invalid ticket string' }));
             return;
           }
-          const user = wsTicketManager.consumeTicket(parsed.ticket);
+          const user = await wsTicketManager.consumeTicket(parsed.ticket);
           if (user) {
             ws.user = user;
+            ws.sessionId = user.sessionId;
+            ws.userId = user.userId;
             console.log(`[WS] Socket authenticated via single-use ticket: ${user.username} (${user.role})`);
             ws.send(JSON.stringify({
               type: 'AUTH_SUCCESS',
@@ -133,27 +159,12 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
           return;
         }
 
-        // Authenticate via JWT frame
+        // Legacy AUTH frame with raw JWT is explicitly rejected
         if (parsed.type === 'AUTH') {
-          if (!parsed.token || typeof parsed.token !== 'string') {
-            ws.send(JSON.stringify({ type: 'AUTH_ERROR', error: 'Missing or invalid token string' }));
-            return;
-          }
-          const user = authenticateToken(parsed.token);
-          if (user) {
-            ws.user = user;
-            console.log(`[WS] Socket authenticated via message frame: ${user.username} (${user.role})`);
-            ws.send(JSON.stringify({
-              type: 'AUTH_SUCCESS',
-              userId: user.userId,
-              username: user.username,
-              role: user.role,
-              accountId: user.accountId,
-              timestamp: new Date().toISOString()
-            }));
-          } else {
-            ws.send(JSON.stringify({ type: 'AUTH_ERROR', error: 'Invalid or expired token' }));
-          }
+          ws.send(JSON.stringify({
+            type: 'AUTH_ERROR',
+            error: 'Direct JWT frame authentication is deprecated and disabled. Use single-use tickets via /api/auth/ws-ticket'
+          }));
           return;
         }
       } catch {
@@ -164,6 +175,67 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     ws.on('close', () => {
       console.log(`[WS] Client disconnected. Total active clients: ${wss.clients.size}`);
     });
+  });
+
+  // Heartbeat & Database Session Verification Loop (every 10 seconds)
+  const pingInterval = setInterval(async () => {
+    if (!wssInstance) return;
+
+    // Collect active session IDs to verify in PostgreSQL
+    const activeSessionIds: string[] = [];
+    for (const client of wssInstance.clients) {
+      const ws = client as AuthenticatedWebSocket;
+      if (ws.isAlive === false) {
+        ws.terminate();
+        continue;
+      }
+      ws.isAlive = false;
+      ws.ping();
+
+      if (ws.sessionId) {
+        activeSessionIds.push(ws.sessionId);
+      }
+    }
+
+    // Cross-process validation: verify active sessions and user status in database
+    if (activeSessionIds.length > 0) {
+      try {
+        const db = await getDatabase();
+        const res = await db.query(
+          `SELECT s.session_id, u.user_id, u.role, u.is_active
+           FROM sessions s
+           JOIN users u ON u.user_id = s.user_id
+           WHERE s.session_id = ANY($1::uuid[]) AND s.expires_at > NOW() AND u.is_active = TRUE`,
+          [activeSessionIds]
+        );
+
+        const validMap = new Map<string, { role: string; is_active: boolean }>(
+          res.rows.map(r => [String(r.session_id), { role: r.role, is_active: r.is_active }])
+        );
+
+        for (const client of wssInstance.clients) {
+          const ws = client as AuthenticatedWebSocket;
+          if (ws.sessionId) {
+            const valid = validMap.get(ws.sessionId);
+            if (!valid || !valid.is_active) {
+              console.log(`[WS] Terminating socket due to revoked session or deactivated user: ${ws.sessionId}`);
+              ws.send(JSON.stringify({ type: 'SESSION_REVOKED', message: 'Session revoked or user deactivated' }));
+              ws.close(4001, 'Session revoked');
+            } else if (ws.user && ws.user.role !== valid.role) {
+              console.log(`[WS] Terminating socket due to altered database role: ${ws.sessionId}`);
+              ws.send(JSON.stringify({ type: 'ROLE_MODIFIED', message: 'User role modified in database' }));
+              ws.close(4003, 'Role modified');
+            }
+          }
+        }
+      } catch {
+        // Suppress heartbeat DB check failure if DB is restarting
+      }
+    }
+  }, 10000);
+
+  wss.on('close', () => {
+    clearInterval(pingInterval);
   });
 
   return wss;

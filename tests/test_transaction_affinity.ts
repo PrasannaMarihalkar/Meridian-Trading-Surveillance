@@ -98,6 +98,20 @@ async function runTransactionAffinityVerification() {
       throw new Error('Connection pool was not responsive after transactions');
     }
     console.log(`  ✓ Pool is responsive (total clients: ${db.pool.totalCount}, idle: ${db.pool.idleCount}, waiting: ${db.pool.waitingCount}).`);
+
+    // 5. Verify that releasing client with error properly destroys it and leaves pool healthy
+    console.log('[TEST 5] Verifying pool health when client is released with rollback error...');
+    const brokenClient = await db.pool.connect();
+    // Simulate rollback failure by releasing client with error
+    brokenClient.release(new Error('SIMULATED_ROLLBACK_FAILURE'));
+    // Acquire fresh connection to prove pool destroyed bad connection and remains healthy
+    const healthyClient = await db.pool.connect();
+    const probe = await healthyClient.query('SELECT 1 AS healthy');
+    healthyClient.release();
+    if (probe.rows[0].healthy !== 1) {
+      throw new Error('Pool was corrupted or non-responsive after client release with error');
+    }
+    console.log('  ✓ Pool destroyed bad connection and safely served healthy replacement.');
   }
 
   console.log('\n=== ALL TRANSACTION AFFINITY & ATOMICITY TESTS PASSED ===\n');
