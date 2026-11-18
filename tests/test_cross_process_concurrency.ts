@@ -240,8 +240,8 @@ async function runCrossProcessConcurrencyVerification() {
     passed++;
   }
 
-  // TEST 3: Cancellation Racing with Matching across Processes
-  console.log('\n[TEST 3] Cancellation Racing with Matching across Separate Processes...');
+  // TEST 3: Deterministic Cancellation vs Matching Race with PostgreSQL Synchronization Barrier
+  console.log('\n[TEST 3] Deterministic Cancellation vs Matching Race with PostgreSQL Synchronization Barrier...');
   await resetTestState();
   {
     const restSell = await TradingService.submitOrder({
@@ -255,7 +255,14 @@ async function runCrossProcessConcurrencyVerification() {
     });
     assert.strictEqual(restSell.order.status, 'OPEN');
 
-    // Process A tries to match it, while Process B tries to cancel it concurrently
+    // Deterministic Synchronization Barrier:
+    // To prove cancellation and matching can overlap without PostgreSQL 40P01 deadlock,
+    // we acquire the Instrument Advisory Lock (Namespace 2, Instrument 1) on a dedicated coordinator connection.
+    // Both matching and cancellation will start, acquire their respective account locks (Namespace 1),
+    // and queue deterministically at the Instrument Advisory Lock gate.
+    const coordinatorClient = await db.pool!.connect();
+    await coordinatorClient.query('SELECT pg_advisory_lock(2, 1)');
+
     const matchInput: PlaceOrderInput = {
       accountId: buyerAccB,
       instrumentId: 1,
@@ -266,25 +273,100 @@ async function runCrossProcessConcurrencyVerification() {
       clientOrderId: randomUUID()
     };
 
-    const [matchRes, cancelRes] = await Promise.all([
-      TradingService.submitOrder(matchInput),
-      workerB.send('CANCEL_ORDER', { orderId: restSell.order.order_id, accountId: sellerAccC })
-    ]);
+    let matchOutcome: { success: boolean; result?: any; error?: string } = { success: false };
+    let cancelOutcome: WorkerResponse = { id: '', success: false };
 
-    // The order must be either 100% FILLED or 100% CANCELLED
-    const finalOrderCheck = await db.query(`SELECT status, filled_qty FROM orders WHERE order_id = $1`, [restSell.order.order_id]);
+    try {
+      // Fire both operations concurrently from separate processes
+      const matchPromise = TradingService.submitOrder(matchInput)
+        .then(res => { matchOutcome = { success: true, result: res }; })
+        .catch(err => { matchOutcome = { success: false, error: err.message || String(err) }; });
+
+      const cancelPromise = workerB.send('CANCEL_ORDER', { orderId: restSell.order.order_id, accountId: sellerAccC })
+        .then(res => { cancelOutcome = res; })
+        .catch(err => { cancelOutcome = { id: '', success: false, error: err.message || String(err) }; });
+
+      // Wait for BOTH transactions to reach the synchronization barrier (confirmed via pg_locks)
+      let barrierReached = false;
+      const startWait = Date.now();
+      while (!barrierReached && Date.now() - startWait < 10000) {
+        const lockRes = await db.query(
+          `SELECT count(*)::INT AS waiting_count
+           FROM pg_locks
+           WHERE locktype = 'advisory' AND classid = 2 AND objid = 1 AND NOT granted`
+        );
+        if (lockRes.rows[0].waiting_count >= 2) {
+          barrierReached = true;
+          break;
+        }
+        await new Promise(r => setTimeout(r, 20));
+      }
+      assert(barrierReached, 'Both matching and cancellation transactions must reach the synchronization barrier');
+      console.log('  ✓ Synchronization barrier reached: exactly 2 concurrent transactions queued at Instrument Advisory Lock gate.');
+
+      // Release the barrier: allows PostgreSQL lock manager to arbitrate between the two transactions
+      await coordinatorClient.query('SELECT pg_advisory_unlock(2, 1)');
+
+      // Await both operations
+      await Promise.all([matchPromise, cancelPromise]);
+    } finally {
+      await coordinatorClient.query('SELECT pg_advisory_unlock_all()').catch(() => {});
+      coordinatorClient.release();
+    }
+
+    // 1. Assert NO PostgreSQL 40P01 deadlock occurred in either transaction
+    if (matchOutcome.error) {
+      assert(!matchOutcome.error.includes('40P01') && !matchOutcome.error.toLowerCase().includes('deadlock'),
+        `Matching failed with deadlock: ${matchOutcome.error}`);
+    }
+    if (cancelOutcome.error) {
+      assert(!cancelOutcome.error.includes('40P01') && !cancelOutcome.error.toLowerCase().includes('deadlock'),
+        `Cancellation failed with deadlock: ${cancelOutcome.error}`);
+    }
+
+    // 2. Query final durable state from database
+    const finalOrderCheck = await db.query(`SELECT status, filled_qty, quantity FROM orders WHERE order_id = $1`, [restSell.order.order_id]);
     const status = finalOrderCheck.rows[0].status;
     const filled = Number(finalOrderCheck.rows[0].filled_qty);
+    const qty = Number(finalOrderCheck.rows[0].quantity);
 
-    assert(status === 'FILLED' || status === 'CANCELLED', `Unexpected order status: ${status}`);
+    // 3. Assert exactly one valid final outcome (either 100% FILLED or 100% CANCELLED)
+    assert(status === 'FILLED' || status === 'CANCELLED', `Invalid final state: ${status}`);
+
     if (status === 'FILLED') {
-      assert.strictEqual(filled, 15, 'If filled, quantity must be 15');
-      assert.strictEqual(cancelRes.success, false, 'Cancel should have failed if filled');
+      // Matching won: order was 100% filled, cancellation must fail cleanly
+      assert.strictEqual(filled, 15, 'Resting sell must have exactly 15 shares filled');
+      assert.strictEqual(cancelOutcome.success, false, 'Cancellation must fail when order is already filled');
+      assert(cancelOutcome.error?.includes('cannot be cancelled in state FILLED') || cancelOutcome.error?.includes('400'),
+        `Expected rejection reason, got: ${cancelOutcome.error}`);
+
+      // Verify trade execution volume
+      const tradesRes = await db.query(`SELECT COALESCE(SUM(quantity), 0)::INT AS total_vol FROM trades WHERE sell_order_id = $1`, [restSell.order.order_id]);
+      assert.strictEqual(tradesRes.rows[0].total_vol, 15, 'Total trades volume must equal exactly 15 shares');
+
+      // Verify zero overfills
+      assert(filled <= qty, `Overfill detected: filled ${filled} > total ${qty}`);
+      console.log('  ✓ Outcome: Matching won the race — order 100% FILLED (15/15), cancel cleanly rejected, 0 deadlocks, 0 overfills.');
     } else {
-      assert.strictEqual(filled, 0, 'If cancelled, filled quantity must be 0');
-      assert.strictEqual(cancelRes.success, true, 'Cancel must succeed if cancelled before match');
+      // Cancellation won: order was 100% cancelled, matching did not fill it
+      assert.strictEqual(filled, 0, 'Cancelled order must have 0 fills');
+      assert.strictEqual(cancelOutcome.success, true, 'Cancellation must succeed when executed before match');
+
+      // Verify trade execution volume
+      const tradesRes = await db.query(`SELECT COALESCE(SUM(quantity), 0)::INT AS total_vol FROM trades WHERE sell_order_id = $1`, [restSell.order.order_id]);
+      assert.strictEqual(tradesRes.rows[0].total_vol, 0, 'No trades should execute against cancelled order');
+
+      // Verify zero overfills and no orphan fills
+      const fillsRes = await db.query(`SELECT count(*)::INT AS fill_count FROM fills WHERE order_id = $1`, [restSell.order.order_id]);
+      assert.strictEqual(fillsRes.rows[0].fill_count, 0, 'No fills should exist for cancelled order');
+      console.log('  ✓ Outcome: Cancellation won the race — order 100% CANCELLED (0/15), match cleanly rested, 0 deadlocks, 0 overfills.');
     }
-    console.log(`  ✓ Race-safe determinism: order resolved cleanly as ${status} (filled: ${filled}/15).`);
+
+    // 4. Assert no partial or orphan state
+    const orphanFills = await db.query(
+      `SELECT f.fill_id FROM fills f LEFT JOIN orders o ON o.order_id = f.order_id WHERE o.order_id IS NULL`
+    );
+    assert.strictEqual(orphanFills.rows.length, 0, 'Zero orphan fills permitted');
     passed++;
   }
 

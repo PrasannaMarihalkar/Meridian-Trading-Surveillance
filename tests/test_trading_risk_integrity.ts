@@ -1009,6 +1009,41 @@ async function run() {
     await db.query(`UPDATE risk_limits SET price_collar_pct = 5.0 WHERE account_id = 1001`);
   });
 
+  // Test 22: Cancellation locking sequence and ownership revalidation
+  await test('Cancellation locking sequence validates pre-read ownership, instrument lock, and order status', async () => {
+    // 1. Submit a valid resting SELL order from Account 1002
+    const sellOrder = await TradingService.submitOrder({
+      accountId: 1002,
+      instrumentId: 1,
+      side: 'SELL',
+      orderType: 'LIMIT',
+      price: 1450.00,
+      quantity: 10,
+      clientOrderId: randomUUID()
+    });
+    assert.strictEqual(sellOrder.order.status, 'OPEN');
+
+    // 2. Attempt cancellation by unauthorized account 1001 (must fail before acquiring transaction locks)
+    await assert.rejects(
+      async () => {
+        await TradingService.cancelOrder(sellOrder.order.order_id, 1001);
+      },
+      /not found or unauthorized/
+    );
+
+    // 3. Authorized cancellation by Account 1002 succeeds atomically
+    const cancelled = await TradingService.cancelOrder(sellOrder.order.order_id, 1002);
+    assert.strictEqual(cancelled.status, 'CANCELLED');
+
+    // 4. Repeated cancellation of already CANCELLED order is rejected cleanly
+    await assert.rejects(
+      async () => {
+        await TradingService.cancelOrder(sellOrder.order.order_id, 1002);
+      },
+      /cannot be cancelled in state CANCELLED/
+    );
+  });
+
   console.log(`\n=== RESULTS: ${passed} PASSED, ${failed} FAILED ===\n`);
   await db.close();
 

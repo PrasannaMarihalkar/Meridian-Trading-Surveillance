@@ -268,5 +268,29 @@
 
 - **Final System Status:** **`READY TO MERGE`** (PR #1 fully verified).
 
+### Entry 007: Cancellation Advisory Lock Sequence Alignment & Deterministic Barrier Regression
+- **Date:** November 18, 2026
+- **Status:** **DEADLOCK FIX VERIFIED & COMPLETE**
+- **Branch:** `fix/final-teacher-demo-readiness`
+- **Activities & Verified Outcomes:**
+  1. **Lock Sequence Alignment in `TradingService.cancelOrder()` (`REQ-DBMS-15`):**
+     - Identified lock order inversion between `cancelOrder()` (Order Row FOR UPDATE -> Instrument Advisory Lock) and `submitOrder()` (Instrument Advisory Lock -> Order Row FOR UPDATE).
+     - Aligned `cancelOrder()` to strictly match the matching transaction's monotonic order:
+       1. Pre-read target order's account and instrument IDs without acquiring row locks.
+       2. Begin database transaction.
+       3. Acquire Account Advisory Lock (`SELECT pg_advisory_xact_lock(1, targetAccountId)`).
+       4. Acquire Instrument Advisory Lock (`SELECT pg_advisory_xact_lock(2, targetInstrumentId)`).
+       5. Select order `FOR UPDATE`.
+       6. Revalidate account ID, instrument ID, ownership and order status.
+       7. Atomically execute status update to `CANCELLED` and optional admin audit log entry.
+  2. **Deterministic Native PostgreSQL Synchronization Barrier Test (`REQ-CONC-03`):**
+     - Upgraded Test 3 in `tests/test_cross_process_concurrency.ts` to utilize a coordinator advisory lock (`pg_advisory_lock(2, 1)`) and catalog barrier check (`pg_locks`).
+     - Forces `submitOrder()` and `cancelOrder()` from separate OS processes to queue deterministically at the exact Instrument Advisory Lock gate.
+     - Verified zero PostgreSQL `40P01` deadlocks, zero overfills, zero partial/orphan states, and exactly one valid deterministic outcome.
+  3. **Documentation Alignment:**
+     - Corrected `docs/TEACHER_DEMO_SCRIPT.md` Step 5 to invoke `npm run test:cross-process`.
+- **Final System Status:** **`READY TO MERGE`** (PR #1 fully verified).
+
+
 
 

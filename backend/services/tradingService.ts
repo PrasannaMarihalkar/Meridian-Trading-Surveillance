@@ -570,15 +570,44 @@ export class TradingService {
     adminAudit?: { actorUserId: number; reason: string }
   ): Promise<Order> {
     const db = await getDatabase();
+
+    // 1. Read the target order's account and instrument IDs without acquiring row locks
+    const preRes = await db.query<Order>(
+      `SELECT order_id, account_id, instrument_id, status FROM orders WHERE order_id = $1`,
+      [orderId]
+    );
+
+    if (preRes.rows.length === 0) {
+      throw new Error(`Order ${orderId} not found or unauthorized`);
+    }
+
+    const preOrder = preRes.rows[0];
+    const targetAccountId = Number(preOrder.account_id);
+    const targetInstrumentId = Number(preOrder.instrument_id);
+
+    // Pre-check caller account ownership
+    if (accountId !== targetAccountId) {
+      throw new Error(`Order ${orderId} not found or unauthorized`);
+    }
+
+    if (preOrder.status !== 'OPEN' && preOrder.status !== 'PARTIALLY_FILLED') {
+      throw new Error(`Order ${orderId} cannot be cancelled in state ${preOrder.status}`);
+    }
+
     let cancelledOrder: Order | null = null;
 
+    // 2. Begin the transaction
     await db.transaction(async (tx) => {
-      // 1. Account Advisory Lock (Namespace 1) serializing account lifecycle
-      await tx.query('SELECT pg_advisory_xact_lock(1, $1)', [accountId]);
+      // 3. Acquire account advisory lock (Namespace 1)
+      await tx.query('SELECT pg_advisory_xact_lock(1, $1)', [targetAccountId]);
 
+      // 4. Acquire instrument advisory lock (Namespace 2)
+      await tx.query('SELECT pg_advisory_xact_lock(2, $1)', [targetInstrumentId]);
+
+      // 5. SELECT the order FOR UPDATE
       const orderRes = await tx.query<Order>(
-        `SELECT * FROM orders WHERE order_id = $1 AND account_id = $2 FOR UPDATE`,
-        [orderId, accountId]
+        `SELECT * FROM orders WHERE order_id = $1 FOR UPDATE`,
+        [orderId]
       );
 
       if (orderRes.rows.length === 0) {
@@ -586,13 +615,21 @@ export class TradingService {
       }
 
       const order = orderRes.rows[0];
-      // 2. Instrument Advisory Lock (Namespace 2) serializing order matching determinism
-      await tx.query('SELECT pg_advisory_xact_lock(2, $1)', [order.instrument_id]);
+
+      // 6. Revalidate account ID, instrument ID, ownership and order status
+      if (
+        Number(order.account_id) !== targetAccountId ||
+        Number(order.instrument_id) !== targetInstrumentId ||
+        Number(order.account_id) !== accountId
+      ) {
+        throw new Error(`Order ${orderId} not found or unauthorized`);
+      }
 
       if (order.status !== 'OPEN' && order.status !== 'PARTIALLY_FILLED') {
         throw new Error(`Order ${orderId} cannot be cancelled in state ${order.status}`);
       }
 
+      // 7. Perform cancellation and any admin audit insertion atomically
       const updated = await tx.query<Order>(
         `UPDATE orders SET status = 'CANCELLED', cancel_requested_at = NOW(), updated_at = NOW()
          WHERE order_id = $1 RETURNING *`,

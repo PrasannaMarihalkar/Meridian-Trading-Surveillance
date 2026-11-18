@@ -96,9 +96,9 @@ Open your browser at: **`http://localhost:4000`**
    - **Namespace 2:** `SELECT pg_advisory_xact_lock(2, instrumentId)` — serializes order matching and price discovery.
 2. **Run the Genuine Multi-Process Concurrency Suite:**
    ```bash
-   npm run test:concurrency
+   npm run test:cross-process
    ```
-   - Demonstrates 10 concurrent competing worker threads against 1 resting order: zero overfills, zero deadlocks, exact financial parity.
+   - Demonstrates independent OS worker processes competing concurrently for liquidity, cross-instrument cash, and deterministic cancellation racing with synchronization barriers: zero 40P01 deadlocks, zero overfills, exact financial parity.
 
 ---
 
