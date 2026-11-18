@@ -173,16 +173,27 @@
       - Added division-by-zero guards for zero-volume or zero-order windows.
       - Enforced cosine similarity threshold `similarity >= 0.85` for alert generation.
       - **Verification:** Verified in `tests/test_trading_risk_integrity.ts` Test 8.
-  11. **Phase 6: C++ Engine Hardening & Sanitizer Verification (`REQ-CPP-07`):**
-      - Added duplicate order ID rejection (`active_order_ids`), price/quantity validation, and structured error responses in `engine/src/main.cpp`.
+  11. **Phase 6: C++ Engine Hardening & Sanitizer Verification (`REQ-CPP-07`, `REQ-CPP-08`):**
+      - Added duplicate order ID rejection (`active_order_ids`), price/quantity validation, unknown instrument rejection, and structured error responses in `engine/src/main.cpp`.
       - Recompiled with GCC `-std=c++20 -O2 -fsanitize=address,undefined -Wall -Wextra` under WSL with 0 errors / 0 warnings.
-      - Verified 6/6 tests passing in `tests/cpp_bridge.test.ts`.
+      - Expanded `tests/cpp_bridge.test.ts` to 12 comprehensive tests including crash recovery and IPC edge cases (12/12 passed).
   12. **Phase 7: Frontend Idempotency Key Persistence (`REQ-UI-05`):**
       - Updated `frontend/src/components/TradingTerminal.tsx` to preserve `activeIdempotencyKey` across network retries and submission failures, resetting only upon confirmed success or user edit.
       - Rebuilt frontend with `npm run build:frontend`.
   13. **Phase 8: Runtime Modernization, Docker & CI Alignment (`REQ-OPS-01`):**
       - Upgraded Node.js target to Node 22 LTS in `.github/workflows/ci.yml` and `Dockerfile`.
       - Hardened container with non-root `USER node` and `HEALTHCHECK`.
-      - Updated `package.json` `test:all` script to execute all 6 automated test suites (42/42 tests passing across Native PG 16 and PGlite).
+      - Updated `package.json` `test:all` script to execute all 6 automated test suites (57/57 tests passing across Native PG 16 and PGlite).
+  14. **Phase 9: WebSocket Single-Use Tickets, Origin Validation & Replay Defense (`REQ-SEC-11`):**
+      - Implemented `wsTicketManager` generating 30-second TTL single-use tickets with SHA-256 storage and atomic deletion upon redemption.
+      - Validated origin hostnames against allowed list (`isAllowedOrigin`).
+      - Verified in `tests/test_auth_rbac_hardening.ts` (9/9 passed).
+  15. **Phase 10: PostgreSQL Advisory Locks & Position Bounds (`REQ-TRD-03`, `REQ-RSK-03`):**
+      - Added `SELECT pg_advisory_xact_lock($1)` on `instrumentId` for cross-process transaction serialization at the database engine level.
+      - Bounded short exposure for SELL orders: `Math.abs(currentNet - committedSells - qty) <= max_position_qty`.
+      - Bounded purchasing power reservation for MARKET BUY orders to upper 5% price collar (`refPrice * 1.05`).
+      - Verified in `tests/test_trading_risk_integrity.ts` (13/13 passed).
+
+- **Final System Status:** **`READY FOR VERIFIED TEACHER DEMO`** (57/57 tests passing across Native PostgreSQL 16 and PGlite, 17/17 demo queries verified).
 
 

@@ -48,7 +48,7 @@ The system partitions workloads across specialized architectural tiers:
 │  - Lock-Free SPSC Order Intake Ring     │     │  - 17 Relational Tables (BCNF)      │
 │  - Price-Time Limit Order Book (LOB)    │────►│  - Pre-Trade & Settlement Triggers  │
 │  - Deterministic Trade Match Generation │     │  - Stored Procedures & P&L Engine   │
-│  - Nanosecond Latency Benchmarks        │     │  - pgvector Cosine Pattern Search   │
+│  - Nanosecond Latency Benchmarks        │     │  - Native 8-D Cosine Similarity     │
 └────────────────────┬────────────────────┘     │  - Full-Text tsvector Search        │
                      │                          └─────────────────────────────────────┘
                      ▼
@@ -94,7 +94,7 @@ The database architecture leverages multiple database paradigms according to dat
 | Paradigm | Technology | Entities / Data | Rationale |
 |---|---|---|---|
 | **Relational (SQL)** | PostgreSQL 16+ | Users, Accounts, Orders, Trades, Fills, Positions, Risk Limits, Audit Log | Strict ACID compliance guarantees that orders are never half-settled. Relational joins calculate P&L, holdings, and risk headroom. |
-| **Vector (Embeddings)** | PostgreSQL + `pgvector` | `surveillance_sessions.features`, `surveillance_patterns.embedding` | Hand-engineered 8-D behavioral features enable cosine similarity search to surface spoofing/layering patterns that SQL equality cannot express. |
+| **Vector (Embeddings)** | Native PostgreSQL (`DOUBLE PRECISION[]`) | `surveillance_sessions.features`, `surveillance_patterns.embedding` | Hand-engineered 8-D behavioral features stored as `DOUBLE PRECISION[] NOT NULL` (8 dimensions) enable native cosine similarity search via stored procedure `fn_cosine_similarity` to surface spoofing/layering without external C extensions (`pgvector`). |
 | **Document (NoSQL)** | Flexible JSONB / Mongo Schema | Order book snapshots, tick archives, audit snapshots (`old_data`, `new_data`) | Variable-depth order book snapshots and raw unstructured tick traces suit JSONB/document structures. |
 | **Search (Information Retrieval)** | PostgreSQL Full-Text (`tsvector` / `tsquery`) | `alert_notes.body_tsv` | Inverted index search over compliance investigation notes using English stemming and lexeme tokenization. |
 

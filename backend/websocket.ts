@@ -3,6 +3,7 @@ import { Server as HttpServer, IncomingMessage } from 'http';
 import jwt from 'jsonwebtoken';
 import { AuthTokenPayload } from './types';
 import { JWT_SECRET } from './middleware/auth';
+import { wsTicketManager } from './services/wsTicketManager';
 
 export interface MarketBroadcastPayload {
   type: 'BOOK_UPDATE' | 'TRADE_TICK' | 'SURVEILLANCE_ALERT' | 'ORDER_UPDATE';
@@ -17,6 +18,22 @@ export interface AuthenticatedWebSocket extends WebSocket {
 
 let wssInstance: WebSocketServer | null = null;
 
+function isAllowedOrigin(originHeader?: string): boolean {
+  if (!originHeader) return true; // Non-browser clients or direct tests
+  try {
+    const originUrl = new URL(originHeader);
+    const host = originUrl.hostname;
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
+    const corsEnv = process.env.CORS_ORIGIN;
+    if (corsEnv && (corsEnv === '*' || corsEnv.split(',').map(s => s.trim()).includes(originHeader))) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 function authenticateToken(tokenStr: string): AuthTokenPayload | null {
   try {
     const decoded = jwt.verify(tokenStr, JWT_SECRET) as AuthTokenPayload;
@@ -27,7 +44,18 @@ function authenticateToken(tokenStr: string): AuthTokenPayload | null {
 }
 
 export function initWebSocketServer(server: HttpServer): WebSocketServer {
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  const wss = new WebSocketServer({
+    server,
+    path: '/ws',
+    verifyClient: (info, cb) => {
+      const origin = info.origin;
+      if (!isAllowedOrigin(origin)) {
+        cb(false, 403, 'Forbidden Origin');
+      } else {
+        cb(true);
+      }
+    }
+  });
   wssInstance = wss;
 
   console.log('[WS] Authenticated WebSocket server initialized on path /ws');
@@ -35,15 +63,23 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
   wss.on('connection', (ws: AuthenticatedWebSocket, req: IncomingMessage) => {
     ws.isAlive = true;
 
-    // Check query string for optional direct authentication (?token=...)
+    // Check query string for short-lived ticket (?ticket=...) or legacy token (?token=...)
     try {
       const parsedUrl = new URL(req.url || '', 'http://localhost');
+      const ticketQuery = parsedUrl.searchParams.get('ticket');
       const tokenQuery = parsedUrl.searchParams.get('token');
-      if (tokenQuery && tokenQuery.length > 0) {
+
+      if (ticketQuery && ticketQuery.length > 0) {
+        const user = wsTicketManager.consumeTicket(ticketQuery);
+        if (user) {
+          ws.user = user;
+          console.log(`[WS] Client authenticated via single-use ticket: ${user.username} (${user.role})`);
+        }
+      } else if (tokenQuery && tokenQuery.length > 0) {
         const user = authenticateToken(tokenQuery);
         if (user) {
           ws.user = user;
-          console.log(`[WS] Client authenticated via query param: ${user.username} (${user.role})`);
+          console.log(`[WS] Client authenticated via token query param: ${user.username} (${user.role})`);
         }
       }
     } catch {
@@ -73,6 +109,31 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
           return;
         }
 
+        // Authenticate via Single-Use Ticket frame
+        if (parsed.type === 'AUTH_TICKET') {
+          if (!parsed.ticket || typeof parsed.ticket !== 'string') {
+            ws.send(JSON.stringify({ type: 'AUTH_ERROR', error: 'Missing or invalid ticket string' }));
+            return;
+          }
+          const user = wsTicketManager.consumeTicket(parsed.ticket);
+          if (user) {
+            ws.user = user;
+            console.log(`[WS] Socket authenticated via single-use ticket: ${user.username} (${user.role})`);
+            ws.send(JSON.stringify({
+              type: 'AUTH_SUCCESS',
+              userId: user.userId,
+              username: user.username,
+              role: user.role,
+              accountId: user.accountId,
+              timestamp: new Date().toISOString()
+            }));
+          } else {
+            ws.send(JSON.stringify({ type: 'AUTH_ERROR', error: 'Invalid, expired, or already consumed ticket' }));
+          }
+          return;
+        }
+
+        // Authenticate via JWT frame
         if (parsed.type === 'AUTH') {
           if (!parsed.token || typeof parsed.token !== 'string') {
             ws.send(JSON.stringify({ type: 'AUTH_ERROR', error: 'Missing or invalid token string' }));

@@ -137,3 +137,15 @@ INSERT INTO engine_offsets (consumer, last_seq, updated_at) VALUES
 ('market_data_broadcaster', 700002, '2026-11-17 09:20:05+05:30'),
 ('surveillance_stream_consumer', 700002, '2026-11-17 10:01:10+05:30')
 ON CONFLICT (consumer) DO NOTHING;
+
+-- Synchronize All 10 Dynamic Primary Key Sequences with Seed Data
+SELECT setval('user_id_seq', (SELECT COALESCE(MAX(user_id), 1) FROM users));
+SELECT setval('account_id_seq', (SELECT COALESCE(MAX(account_id), 1) FROM accounts));
+SELECT setval('order_id_seq', (SELECT COALESCE(MAX(order_id), 1) FROM orders));
+SELECT setval('trade_id_seq', (SELECT COALESCE(MAX(trade_id), 1) FROM trades));
+SELECT setval('fill_id_seq', (SELECT COALESCE(MAX(fill_id), 1) FROM fills));
+SELECT setval('engine_seq_gen', (SELECT COALESCE(MAX(engine_seq), 1) FROM trades));
+SELECT setval('surveillance_sessions_id_seq', (SELECT COALESCE(MAX(session_id), 1) FROM surveillance_sessions));
+SELECT setval('alerts_id_seq', (SELECT COALESCE(MAX(alert_id), 1) FROM alerts));
+SELECT setval('alert_notes_id_seq', (SELECT COALESCE(MAX(note_id), 1) FROM alert_notes));
+SELECT setval('audit_log_id_seq', (SELECT COALESCE(MAX(audit_id), 1) FROM audit_log));

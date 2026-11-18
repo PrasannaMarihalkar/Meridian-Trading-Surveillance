@@ -127,7 +127,9 @@ export class TradingService {
 
     const acc = accRes.rows[0];
     const refPrice = parseFloat(inst.reference_price);
-    const effectivePrice = params.orderType === 'MARKET' ? refPrice : params.price;
+    const collarPct = acc.price_collar_pct ? parseFloat(acc.price_collar_pct) : 5.0;
+    // Market orders calculate purchasing power commitment using protected upper price collar bound
+    const effectivePrice = params.orderType === 'MARKET' ? (refPrice * (1 + collarPct / 100)) : params.price;
     const notional = effectivePrice * params.quantity;
 
     if (acc.max_order_qty && params.quantity > parseInt(acc.max_order_qty, 10)) {
@@ -156,7 +158,6 @@ export class TradingService {
 
     // Price Collar Check
     if (params.orderType !== 'MARKET' && acc.price_collar_pct) {
-      const collarPct = parseFloat(acc.price_collar_pct);
       const diffPct = Math.abs((params.price - refPrice) / refPrice) * 100;
       if (diffPct > collarPct) {
         throw new Error(
@@ -194,6 +195,29 @@ export class TradingService {
         );
       }
     }
+
+    // Sell position commitment and short exposure check
+    if (params.side === 'SELL') {
+      const posRes = await db.query(
+        `SELECT net_qty FROM positions WHERE account_id = $1 AND instrument_id = $2`,
+        [params.accountId, params.instrumentId]
+      );
+      const currentNet = posRes.rows.length > 0 ? parseInt(posRes.rows[0].net_qty, 10) : 0;
+      const openSellsRes = await db.query(
+        `SELECT COALESCE(SUM(quantity - filled_qty), 0) AS committed_qty
+         FROM orders
+         WHERE account_id = $1 AND instrument_id = $2 AND side = 'SELL' AND status IN ('OPEN', 'PARTIALLY_FILLED')`,
+        [params.accountId, params.instrumentId]
+      );
+      const committedQty = parseInt(openSellsRes.rows[0].committed_qty, 10);
+      const maxPos = acc.max_position_qty ? parseInt(acc.max_position_qty, 10) : 5000;
+      const totalShortExposure = Math.abs(currentNet - committedQty - params.quantity);
+      if (totalShortExposure > maxPos) {
+        throw new Error(
+          `Projected short exposure (${totalShortExposure}) exceeds account maximum position limit of ${maxPos} (Current net: ${currentNet}, Open sell commitments: ${committedQty})`
+        );
+      }
+    }
   }
 
   /**
@@ -220,13 +244,15 @@ export class TradingService {
         }
 
         // Verify payload parameters match
+        const expectedTif = input.timeInForce || (input.orderType === 'IOC' ? 'IOC' : 'DAY');
         const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
         const qtyMatches = Number(existing.quantity) === Number(input.quantity);
         const sideMatches = existing.side === input.side;
         const typeMatches = existing.order_type === input.orderType;
         const instMatches = Number(existing.instrument_id) === Number(input.instrumentId);
+        const tifMatches = existing.time_in_force === expectedTif;
 
-        if (!priceMatches || !qtyMatches || !sideMatches || !typeMatches || !instMatches) {
+        if (!priceMatches || !qtyMatches || !sideMatches || !typeMatches || !instMatches || !tifMatches) {
           const err = new Error('Idempotency key reused with differing order parameters');
           (err as unknown as { statusCode: number }).statusCode = 409;
           throw err;
@@ -246,6 +272,9 @@ export class TradingService {
 
       try {
         await db.transaction(async (tx) => {
+          // Transaction-scoped per-instrument advisory lock guaranteeing cross-process engine serialization
+          await tx.query('SELECT pg_advisory_xact_lock($1)', [input.instrumentId]);
+
           // Pre-trade risk validation inside the transaction boundary
           await this.validateRiskLimits(input, tx);
 
@@ -289,7 +318,7 @@ export class TradingService {
               SELECT order_id, account_id, price, quantity, filled_qty, (quantity - filled_qty) AS leaves_qty
               FROM orders
               WHERE instrument_id = $1 AND side = $2 AND account_id <> $3 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND (quantity - filled_qty) > 0
-              ORDER BY price ${sortOrder}, submitted_at ASC
+              ORDER BY price ${sortOrder}, submitted_at ASC, order_id ASC
               FOR UPDATE
             `;
             candidateParams = [input.instrumentId, oppositeSide, input.accountId];
@@ -300,7 +329,7 @@ export class TradingService {
               FROM orders
               WHERE instrument_id = $1 AND side = $2 AND account_id <> $3 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND (quantity - filled_qty) > 0
               ${priceCondition}
-              ORDER BY price ${sortOrder}, submitted_at ASC
+              ORDER BY price ${sortOrder}, submitted_at ASC, order_id ASC
               FOR UPDATE
             `;
             candidateParams = [input.instrumentId, oppositeSide, input.accountId, input.price];
@@ -464,13 +493,15 @@ export class TradingService {
           );
           if (concurrentRes.rows.length > 0) {
             const existing = concurrentRes.rows[0];
+            const expectedTif = input.timeInForce || (input.orderType === 'IOC' ? 'IOC' : 'DAY');
             const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
             const qtyMatches = Number(existing.quantity) === Number(input.quantity);
             const sideMatches = existing.side === input.side;
             const typeMatches = existing.order_type === input.orderType;
             const instMatches = Number(existing.instrument_id) === Number(input.instrumentId);
+            const tifMatches = existing.time_in_force === expectedTif;
 
-            if (priceMatches && qtyMatches && sideMatches && typeMatches && instMatches) {
+            if (priceMatches && qtyMatches && sideMatches && typeMatches && instMatches && tifMatches) {
               const concurrentTrades = await db.query<Trade>(
                 `SELECT * FROM trades WHERE buy_order_id = $1 OR sell_order_id = $1 ORDER BY trade_id ASC`,
                 [existing.order_id]

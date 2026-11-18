@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { AuthService } from '../services/authService';
 import { authenticate, requireRole, AuthenticatedRequest } from '../middleware/auth';
 import { getDatabase } from '../../database/db';
+import { wsTicketManager } from '../services/wsTicketManager';
 import { z } from 'zod';
 
 const router = Router();
@@ -82,6 +83,20 @@ router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response)
     res.json(profile);
   } catch (err) {
     res.status(404).json({ error: getErrorMessage(err) || 'Profile not found' });
+  }
+});
+
+// Issue Short-Lived Single-Use WebSocket Ticket
+router.post('/ws-ticket', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const ticket = wsTicketManager.issueTicket(req.user, 30000);
+    res.json({ ticket, expiresIn: 30 });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) || 'Failed to issue WebSocket ticket' });
   }
 });
 

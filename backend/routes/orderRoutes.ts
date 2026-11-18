@@ -48,6 +48,12 @@ router.post('/', authenticate, async (req: AuthenticatedRequest, res: Response) 
       return;
     }
 
+    // Strict Role-Based Access Control: Analysts are prohibited from submitting trading orders
+    if (req.user?.role === 'ANALYST') {
+      res.status(403).json({ error: 'Forbidden: Analysts are not permitted to submit trading orders' });
+      return;
+    }
+
     const validated = PlaceOrderSchema.parse({ ...req.body, clientOrderId: idempotencyKey });
 
     // Derive account identity securely from authenticated principal
@@ -148,8 +154,11 @@ router.post('/:id/cancel', authenticate, async (req: AuthenticatedRequest, res: 
 
     const targetAccountId = parseInt(orderRes.rows[0].account_id, 10);
     const userRole = req.user?.role;
+    let adminAuditReason: string | undefined;
     if (userRole === 'ADMIN') {
-      // Admin is authorized to cancel any order
+      adminAuditReason = (typeof req.body?.reason === 'string' && req.body.reason.trim())
+        ? req.body.reason.trim()
+        : 'Administrative order cancellation by system administrator';
     } else if (userRole === 'TRADER' && req.user?.accountId === targetAccountId) {
       // Trader is authorized to cancel their own order
     } else {
@@ -158,6 +167,18 @@ router.post('/:id/cancel', authenticate, async (req: AuthenticatedRequest, res: 
     }
 
     const cancelledOrder = await TradingService.cancelOrder(orderId, targetAccountId);
+
+    if (userRole === 'ADMIN' && adminAuditReason) {
+      try {
+        await db.query(
+          `INSERT INTO audit_log (audit_id, occurred_at, actor_user_id, action, entity_type, entity_id, new_data)
+           VALUES (nextval('audit_log_id_seq'), NOW(), $1, 'ADMIN_ORDER_CANCEL', 'orders', $2, $3::JSONB)`,
+          [req.user?.userId, String(orderId), JSON.stringify({ reason: adminAuditReason, order_id: orderId })]
+        );
+      } catch (auditErr) {
+        console.warn('[AUDIT_LOG] Failed to record admin cancellation audit event:', auditErr);
+      }
+    }
     res.json({ message: 'Order cancelled successfully', order: cancelledOrder });
   } catch (err) {
     res.status(400).json({ error: getErrorMessage(err) });

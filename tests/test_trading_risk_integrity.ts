@@ -166,7 +166,8 @@ async function run() {
 
   // Test 4: Financial Risk: Max Position Limit (Phase 3 Finding 7)
   await test('Risk controls reject orders exceeding max_position_qty', async () => {
-    // Set Account 1001 max_position_qty to 20
+    // Reset Account 1001 net position to 0 and set max_position_qty to 20
+    await db.query(`UPDATE positions SET net_qty = 0 WHERE account_id = 1001 AND instrument_id = 1`);
     await db.query(`UPDATE risk_limits SET max_position_qty = 20 WHERE account_id = 1001`);
 
     try {
@@ -360,6 +361,171 @@ async function run() {
     // Feature 4: size skew must be in range [0, 1]
     const sizeSkew = survRes.session.size_skew;
     assert(!isNaN(sizeSkew) && sizeSkew >= 0 && sizeSkew <= 1, 'Size skew must be bounded [0, 1]');
+  });
+
+  // Test 9: IOC with zero liquidity immediately cancels with zero fills and does not rest
+  await test('IOC with zero liquidity cancels immediately with 0 fills and 0 book resting', async () => {
+    // Clear all resting asks on instrument 5
+    await db.query(`UPDATE orders SET status = 'CANCELLED' WHERE instrument_id = 5 AND side = 'SELL' AND status IN ('OPEN', 'PARTIALLY_FILLED')`);
+
+    const iocZero = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 5,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      timeInForce: 'IOC',
+      price: 1100.00,
+      quantity: 10,
+      clientOrderId: randomUUID()
+    });
+
+    assert.strictEqual(iocZero.order.status, 'CANCELLED', 'IOC with 0 liquidity must be CANCELLED');
+    assert.strictEqual(iocZero.order.filled_qty, 0, 'IOC with 0 liquidity must have 0 fills');
+    assert.strictEqual(iocZero.trades.length, 0);
+
+    const resting = await db.query(
+      `SELECT * FROM orders WHERE order_id = $1 AND status IN ('OPEN', 'PARTIALLY_FILLED')`,
+      [iocZero.order.order_id]
+    );
+    assert.strictEqual(resting.rows.length, 0, 'Zero-liquidity IOC must not rest on book');
+  });
+
+  // Test 10: FOK multi-level liquidity: fills across multiple resting orders
+  await test('FOK fills 100% across multi-level resting orders when aggregate liquidity is sufficient', async () => {
+    await db.query(`UPDATE orders SET status = 'CANCELLED' WHERE instrument_id = 3 AND status IN ('OPEN', 'PARTIALLY_FILLED')`);
+
+    // Place 3 resting sells at differing price levels: 5 @ 1490, 5 @ 1495, 10 @ 1500 (total = 20)
+    await TradingService.submitOrder({
+      accountId: 1002,
+      instrumentId: 3,
+      side: 'SELL',
+      orderType: 'LIMIT',
+      price: 1490.00,
+      quantity: 5,
+      clientOrderId: randomUUID()
+    });
+    await TradingService.submitOrder({
+      accountId: 1002,
+      instrumentId: 3,
+      side: 'SELL',
+      orderType: 'LIMIT',
+      price: 1495.00,
+      quantity: 5,
+      clientOrderId: randomUUID()
+    });
+    await TradingService.submitOrder({
+      accountId: 1002,
+      instrumentId: 3,
+      side: 'SELL',
+      orderType: 'LIMIT',
+      price: 1500.00,
+      quantity: 10,
+      clientOrderId: randomUUID()
+    });
+
+    // FOK BUY for 20 shares @ 1500 -> Sweeps all 3 levels completely
+    const fokMulti = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 3,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      timeInForce: 'FOK',
+      price: 1500.00,
+      quantity: 20,
+      clientOrderId: randomUUID()
+    });
+
+    assert.strictEqual(fokMulti.order.status, 'FILLED', 'FOK order must be FILLED across all 3 levels');
+    assert.strictEqual(fokMulti.order.filled_qty, 20);
+    assert.strictEqual(fokMulti.trades.length, 3, 'Must match across all 3 resting orders');
+  });
+
+  // Test 11: Idempotency rejects key reuse with differing timeInForce (409 Conflict)
+  await test('Idempotency rejects key reuse with differing timeInForce (409 Conflict)', async () => {
+    const key = randomUUID();
+    const firstOrder = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      timeInForce: 'DAY',
+      price: 1350.00,
+      quantity: 5,
+      clientOrderId: key
+    });
+    assert.strictEqual(firstOrder.order.status, 'OPEN');
+
+    let conflictCaught = false;
+    try {
+      await TradingService.submitOrder({
+        accountId: 1001,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        timeInForce: 'IOC', // Differing TIF with same key!
+        price: 1350.00,
+        quantity: 5,
+        clientOrderId: key
+      });
+    } catch (err: any) {
+      conflictCaught = true;
+      assert.strictEqual(err.statusCode, 409, 'Must return 409 Conflict on TIF mismatch');
+    }
+    assert(conflictCaught, 'Key reuse with differing timeInForce must be rejected');
+  });
+
+  // Test 12: Short position exposure check rejects SELL orders exceeding max_position_qty
+  await test('SELL orders validate short exposure and reject orders exceeding max_position_qty', async () => {
+    await db.query(`UPDATE risk_limits SET max_position_qty = 50 WHERE account_id = 1002`);
+
+    let shortCaught = false;
+    try {
+      await TradingService.submitOrder({
+        accountId: 1002,
+        instrumentId: 1,
+        side: 'SELL',
+        orderType: 'LIMIT',
+        price: 1450.00,
+        quantity: 500, // Exceeds max position limit of 50
+        clientOrderId: randomUUID()
+      });
+    } catch (err: any) {
+      shortCaught = true;
+      assert(err.message.includes('exceeds account maximum position limit'), `Unexpected error: ${err.message}`);
+    }
+    assert(shortCaught, 'Must reject SELL order exceeding max short position exposure');
+
+    // Restore limit
+    await db.query(`UPDATE risk_limits SET max_position_qty = 5000 WHERE account_id = 1002`);
+  });
+
+  // Test 13: MARKET BUY cash check accounts for 5% collar protected price
+  await test('MARKET BUY order cash check reserves purchasing power up to 5% collar bound', async () => {
+    // Reference price of instrument 1 is 1400.00. 5% upper collar is 1470.00.
+    // 10 shares @ 1400 = 14,000. 10 shares @ 1470 (collar upper bound) = 14,700.
+    // Set cash balance to exactly $14,200 (sufficient for 1400, but insufficient for 1470)
+    await db.query(`UPDATE accounts SET cash_balance = 14200.0000 WHERE account_id = 1001`);
+    await db.query(`UPDATE orders SET status = 'CANCELLED' WHERE account_id = 1001 AND side = 'BUY' AND status IN ('OPEN', 'PARTIALLY_FILLED')`);
+
+    let marketCashCaught = false;
+    try {
+      await TradingService.submitOrder({
+        accountId: 1001,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'MARKET',
+        price: 0,
+        quantity: 10,
+        clientOrderId: randomUUID()
+      });
+    } catch (err: any) {
+      marketCashCaught = true;
+      assert(err.message.includes('Insufficient available cash'), `Unexpected error: ${err.message}`);
+    }
+    assert(marketCashCaught, 'Market order must validate purchasing power against upper collar protected price');
+
+    // Restore cash
+    await db.query(`UPDATE accounts SET cash_balance = 1000000.0000 WHERE account_id = 1001`);
   });
 
   console.log(`\n=== RESULTS: ${passed} PASSED, ${failed} FAILED ===\n`);

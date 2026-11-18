@@ -30,7 +30,7 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
 
     const db = await getDatabase();
     const sessionRes = await db.query(
-      `SELECT s.session_id, u.is_active, s.expires_at
+      `SELECT s.session_id, u.is_active, u.role, s.expires_at
        FROM sessions s
        JOIN users u ON u.user_id = s.user_id
        WHERE s.session_id = $1`,
@@ -53,7 +53,11 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       return;
     }
 
-    req.user = decoded;
+    // Authoritative role and active status from current database state, preventing stale JWT claims
+    req.user = {
+      ...decoded,
+      role: session.role as UserRole
+    };
     next();
   } catch {
     res.status(401).json({ error: 'Unauthorized: Token expired or invalid' });

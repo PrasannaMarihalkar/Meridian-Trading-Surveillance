@@ -448,6 +448,178 @@ async function run() {
     assert.strictEqual(analystGotAlert, true, 'Analyst socket MUST receive SURVEILLANCE_ALERT');
   });
 
+  // Test 7: Single-Use Short-Lived WebSocket Ticket Authentication & Replay Rejection
+  await test('WebSocket single-use ticket: successfully authenticates and rejects replay attempts', async () => {
+    // 7a. Request short-lived single-use ticket via authenticated HTTP endpoint
+    const ticketRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/auth/ws-ticket',
+      method: 'POST',
+      headers: { Authorization: `Bearer ${traderToken}` }
+    });
+    assert.strictEqual(ticketRes.status, 200, 'Ticket request must return 200');
+    assert(ticketRes.body.ticket, 'Ticket string must be present');
+    assert.strictEqual(ticketRes.body.expiresIn, 30, 'Ticket must have 30s TTL');
+
+    const validTicket = ticketRes.body.ticket;
+
+    // 7b. Connect with ticket and authenticate
+    const ws1 = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise<void>((resolve) => ws1.on('open', () => resolve()));
+
+    const authPromise1 = new Promise<any>((resolve) => {
+      ws1.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'AUTH_SUCCESS' || msg.type === 'AUTH_ERROR') resolve(msg);
+        } catch {}
+      });
+    });
+
+    ws1.send(JSON.stringify({ type: 'AUTH_TICKET', ticket: validTicket }));
+    const authResult1 = await authPromise1;
+    assert.strictEqual(authResult1.type, 'AUTH_SUCCESS', 'First ticket use must succeed');
+    assert.strictEqual(authResult1.username, 'prasanna_trader');
+    ws1.close();
+
+    // 7c. Replay Attack Test: Attempting to use the exact same ticket MUST fail!
+    const ws2 = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise<void>((resolve) => ws2.on('open', () => resolve()));
+
+    const authPromise2 = new Promise<any>((resolve) => {
+      ws2.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'AUTH_SUCCESS' || msg.type === 'AUTH_ERROR') resolve(msg);
+        } catch {}
+      });
+    });
+
+    ws2.send(JSON.stringify({ type: 'AUTH_TICKET', ticket: validTicket }));
+    const authResult2 = await authPromise2;
+    assert.strictEqual(authResult2.type, 'AUTH_ERROR', 'Replaying an already consumed ticket MUST be rejected');
+    ws2.close();
+
+    // 7d. Invalid ticket rejection
+    const ws3 = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise<void>((resolve) => ws3.on('open', () => resolve()));
+
+    const authPromise3 = new Promise<any>((resolve) => {
+      ws3.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'AUTH_SUCCESS' || msg.type === 'AUTH_ERROR') resolve(msg);
+        } catch {}
+      });
+    });
+
+    ws3.send(JSON.stringify({ type: 'AUTH_TICKET', ticket: 'non_existent_fake_ticket' }));
+    const authResult3 = await authPromise3;
+    assert.strictEqual(authResult3.type, 'AUTH_ERROR', 'Bogus ticket must be rejected');
+    ws3.close();
+  });
+
+  // Test 8: Order Submission RBAC: Analyst is explicitly prohibited from submitting orders
+  await test('Order submission RBAC: Analyst role is strictly rejected with 403 Forbidden', async () => {
+    const analystLogin = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/auth/login',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      identifier: 'asha_analyst',
+      password: 'Password123!'
+    });
+    const analystToken = analystLogin.body.token;
+
+    const orderAttempt = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/orders',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${analystToken}`,
+        'Idempotency-Key': randomUUID()
+      }
+    }, {
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1350.00,
+      quantity: 5
+    });
+
+    assert.strictEqual(orderAttempt.status, 403, 'Analyst attempting to submit order must receive 403');
+    assert(orderAttempt.body.error.includes('Analysts are not permitted'), 'Descriptive RBAC rejection error');
+  });
+
+  // Test 9: Admin Cancellation Records Audit Reason and Actor ID
+  await test('Admin cancellation: records explicit audit reason and admin actor ID in audit_log', async () => {
+    // 9a. Trader places order
+    const orderUuid = randomUUID();
+    const placeRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/orders',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${traderToken}`,
+        'Idempotency-Key': orderUuid
+      }
+    }, {
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1350.00,
+      quantity: 5,
+      clientOrderId: orderUuid
+    });
+    assert.strictEqual(placeRes.status, 201);
+    const orderId = placeRes.body.order.order_id;
+
+    // 9b. Admin logs in
+    const adminLogin = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/auth/login',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      identifier: 'sys_admin',
+      password: 'Password123!'
+    });
+    const adminToken = adminLogin.body.token;
+
+    // 9c. Admin cancels with explicit reason
+    const reasonText = 'Emergency halt compliance cancellation by risk officer';
+    const cancelRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: `/api/orders/${orderId}/cancel`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      }
+    }, {
+      reason: reasonText
+    });
+    assert.strictEqual(cancelRes.status, 200);
+
+    // 9d. Verify audit log entry exists with reason and actor
+    const auditRes = await db.query(
+      `SELECT * FROM audit_log WHERE entity_id = $1 AND action = 'ADMIN_ORDER_CANCEL' ORDER BY occurred_at DESC LIMIT 1`,
+      [String(orderId)]
+    );
+    assert.strictEqual(auditRes.rows.length, 1, 'Admin cancellation audit log entry must exist');
+    assert.strictEqual(auditRes.rows[0].new_data.reason, reasonText);
+  });
+
   console.log(`\n=== RESULTS: ${passed} PASSED, ${failed} FAILED ===\n`);
   server.close();
   await db.close();

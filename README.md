@@ -172,26 +172,26 @@ Open **`http://localhost:4000`** in your browser.
 ## 7. Verification & Testing
 
 ```bash
-# 1. Run Complete Automated Test Suite (6 test suites, 42/42 assertions passed)
-# Includes: Transaction Affinity + API Integration + Concurrency Stress + C++ Bridge + Auth/RBAC Hardening + Trading/Risk Integrity
+# 1. Run Complete Automated Test Suite (6 test suites, 57/57 assertions passed)
+# Includes: Transaction Affinity (4) + Auth/RBAC Hardening (9) + Trading/Risk Integrity (13) + API Integration (15) + Concurrency Stress (4) + C++ Bridge (12)
 npm run test:all
 
 # 2. Run Backend Integration & Idempotency Test Suite (15/15 passed)
 npm test
 
-# 3. Run Auth, Session Lifecycle & RBAC Hardening Test Suite (6/6 passed)
+# 3. Run Auth, Session Lifecycle, WS Ticket & RBAC Hardening Test Suite (9/9 passed)
 npm run test:auth
 
-# 4. Run Financial Risk, Order Lifecycle & Sequence Integrity Test Suite (8/8 passed)
+# 4. Run Financial Risk, Order Lifecycle & Sequence Integrity Test Suite (13/13 passed)
 npm run test:risk
 
-# 5. Run PostgreSQL Transaction Connection Affinity Verification
+# 5. Run PostgreSQL Transaction Connection Affinity Verification (4/4 assertions passed)
 npm run test:affinity
 
-# 6. Run Multi-Connection Concurrency, Row-Locking & Rollback Isolation Stress Test
+# 6. Run Multi-Connection Concurrency, Row-Locking & Rollback Isolation Stress Test (4/4 steps passed)
 npm run test:concurrency
 
-# 7. Run Hardened C++ Stdio IPC Bridge Test (6/6 passed)
+# 7. Run Hardened C++ Stdio IPC Bridge Test (12/12 passed)
 npm run test:bridge
 
 # 8. Verify Database Schema, Atomicity & Rollbacks on Disposable Instance

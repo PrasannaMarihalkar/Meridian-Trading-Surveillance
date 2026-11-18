@@ -111,24 +111,24 @@ export class SurveillanceService {
     const windowSeconds = Math.max(1, (end.getTime() - start.getTime()) / 1000);
     const msgRate = (ordersPlaced + ordersCanceled) / windowSeconds;
 
-    // Feature 6: book_imbalance_impact (derived from order quantity disparity)
+    // Feature 6: book_imbalance_impact (derived from order quantity disparity; 0.0 if empty window)
     const totalOrderQty = (parseInt(stats.buy_qty, 10) + parseInt(stats.sell_qty, 10)) || 0;
     const bookImbalance = totalOrderQty > 0 
       ? Math.abs(parseInt(stats.buy_qty, 10) - parseInt(stats.sell_qty, 10)) / totalOrderQty 
-      : (cancelRatio > 0.7 ? 0.75 : 0.15);
+      : 0.0;
 
-    // Feature 7: opposite_side_fill_ratio (fills executed opposite to dominant quote side)
+    // Feature 7: opposite_side_fill_ratio (fills executed opposite to dominant quote side; 0.0 if no fills)
     const totalFills = fillStats.total_fills || 0;
     const dominantSide = stats.buy_orders >= stats.sell_orders ? 'BUY' : 'SELL';
     const oppFills = dominantSide === 'BUY' ? fillStats.sell_fills : fillStats.buy_fills;
     const oppFillRatio = totalFills > 0 
       ? oppFills / totalFills 
-      : (cancelRatio > 0.8 ? 0.08 : 0.45);
+      : 0.0;
 
-    // Feature 8: layering_depth (number of distinct price tiers populated)
+    // Feature 8: layering_depth (number of distinct price tiers populated; 0.0 if none)
     const layeringDepth = stats.distinct_price_levels > 0 
       ? stats.distinct_price_levels 
-      : (cancelRatio > 0.75 ? 3.5 : 0.5);
+      : 0.0;
 
     const featureVector = [
       parseFloat(cancelRatio.toFixed(2)),

@@ -27,54 +27,58 @@ export class AuthService {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(params.password, salt);
 
-    const userRes = await db.query<User>(
-      `INSERT INTO users (user_id, email, username, password_hash, role, is_active, created_at)
-       VALUES (nextval('user_id_seq'), $1, $2, $3, $4, TRUE, NOW())
-       RETURNING user_id, email, username, role, is_active, failed_logins, locked_until, last_login_at, created_at`,
-      [params.email.toLowerCase(), params.username, passwordHash, params.role]
-    );
-    const newUser = userRes.rows[0];
-    const nextUserId = newUser.user_id;
-
+    let newUser: User;
     let accountId: number | undefined;
-
-    // If TRADER, automatically provision trading account & default risk limits
-    if (params.role === 'TRADER') {
-      const accRes = await db.query(
-        `INSERT INTO accounts (account_id, user_id, owner_role, cash_balance, created_at)
-         VALUES (nextval('account_id_seq'), $1, $2, 1000000.0000, NOW())
-         RETURNING account_id`,
-        [nextUserId, 'TRADER']
-      );
-      accountId = parseInt(accRes.rows[0].account_id, 10);
-
-      await db.query(
-        `INSERT INTO risk_limits (account_id, max_order_qty, max_order_notional, max_position_qty, max_open_orders, price_collar_pct, updated_at)
-         VALUES ($1, 1000, 2000000.0000, 5000, 25, 5.00, NOW())`,
-        [accountId]
-      );
-    }
-
     const sessionId = randomUUID();
+
+    // Execute user, account, risk limits, and session creation in a single atomic transaction
+    await db.transaction(async (tx) => {
+      const userRes = await tx.query<User>(
+        `INSERT INTO users (user_id, email, username, password_hash, role, is_active, created_at)
+         VALUES (nextval('user_id_seq'), $1, $2, $3, $4, TRUE, NOW())
+         RETURNING user_id, email, username, role, is_active, failed_logins, locked_until, last_login_at, created_at`,
+        [params.email.toLowerCase(), params.username, passwordHash, params.role]
+      );
+      newUser = userRes.rows[0];
+      const nextUserId = newUser.user_id;
+
+      // If TRADER, automatically provision trading account & default risk limits
+      if (params.role === 'TRADER') {
+        const accRes = await tx.query(
+          `INSERT INTO accounts (account_id, user_id, owner_role, cash_balance, created_at)
+           VALUES (nextval('account_id_seq'), $1, $2, 1000000.0000, NOW())
+           RETURNING account_id`,
+          [nextUserId, 'TRADER']
+        );
+        accountId = parseInt(accRes.rows[0].account_id, 10);
+
+        await tx.query(
+          `INSERT INTO risk_limits (account_id, max_order_qty, max_order_notional, max_position_qty, max_open_orders, price_collar_pct, updated_at)
+           VALUES ($1, 1000, 2000000.0000, 5000, 25, 5.00, NOW())`,
+          [accountId]
+        );
+      }
+
+      // Record session
+      await tx.query(
+        `INSERT INTO sessions (session_id, user_id, created_at, expires_at, ip_address, user_agent)
+         VALUES ($1, $2, NOW(), NOW() + INTERVAL '12 hours', '127.0.0.1', 'MeridianClient/1.0')`,
+        [sessionId, newUser.user_id]
+      );
+    });
+
     const tokenPayload: AuthTokenPayload = {
-      userId: newUser.user_id,
-      username: newUser.username,
-      email: newUser.email,
-      role: newUser.role,
+      userId: newUser!.user_id,
+      username: newUser!.username,
+      email: newUser!.email,
+      role: newUser!.role,
       accountId,
       sessionId
     };
 
     const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '12h' });
 
-    // Record session
-    await db.query(
-      `INSERT INTO sessions (session_id, user_id, created_at, expires_at, ip_address, user_agent)
-       VALUES ($1, $2, NOW(), NOW() + INTERVAL '12 hours', '127.0.0.1', 'MeridianClient/1.0')`,
-      [sessionId, newUser.user_id]
-    );
-
-    return { user: newUser, token, accountId };
+    return { user: newUser!, token, accountId };
   }
 
   static async login(params: {
