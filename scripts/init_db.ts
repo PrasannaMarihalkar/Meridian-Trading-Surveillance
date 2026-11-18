@@ -24,10 +24,16 @@ async function main() {
 
   // Synchronize sequences with existing seed data to prevent ID collision
   console.log('[SEQUENCES] Synchronizing atomic primary key sequences...');
-  await db.query(`SELECT setval('order_id_seq', GREATEST(5000, COALESCE((SELECT MAX(order_id) FROM orders), 5000)))`);
-  await db.query(`SELECT setval('trade_id_seq', GREATEST(8000, COALESCE((SELECT MAX(trade_id) FROM trades), 8000)))`);
-  await db.query(`SELECT setval('fill_id_seq', GREATEST(9100, COALESCE((SELECT MAX(fill_id) FROM fills), 9100)))`);
-  await db.query(`SELECT setval('engine_seq_gen', GREATEST(10000, COALESCE((SELECT MAX(engine_seq) FROM trades), 10000)))`);
+  await db.query(`SELECT setval('user_id_seq', (SELECT COALESCE(MAX(user_id), 1) FROM users))`);
+  await db.query(`SELECT setval('account_id_seq', (SELECT COALESCE(MAX(account_id), 1) FROM accounts))`);
+  await db.query(`SELECT setval('order_id_seq', (SELECT COALESCE(MAX(order_id), 1) FROM orders))`);
+  await db.query(`SELECT setval('trade_id_seq', (SELECT COALESCE(MAX(trade_id), 1) FROM trades))`);
+  await db.query(`SELECT setval('fill_id_seq', (SELECT COALESCE(MAX(fill_id), 1) FROM fills))`);
+  await db.query(`SELECT setval('engine_seq_gen', (SELECT COALESCE(MAX(engine_seq), 1) FROM trades))`);
+  await db.query(`SELECT setval('surveillance_sessions_id_seq', (SELECT COALESCE(MAX(session_id), 1) FROM surveillance_sessions))`);
+  await db.query(`SELECT setval('alerts_id_seq', (SELECT COALESCE(MAX(alert_id), 1) FROM alerts))`);
+  await db.query(`SELECT setval('alert_notes_id_seq', (SELECT COALESCE(MAX(note_id), 1) FROM alert_notes))`);
+  await db.query(`SELECT setval('audit_log_id_seq', (SELECT COALESCE(MAX(audit_id), 1) FROM audit_log))`);
   console.log('[SEQUENCES] Sequences synchronized successfully.');
 
   console.log('\n[VERIFICATION] Verifying row counts across all 17 entities:\n');

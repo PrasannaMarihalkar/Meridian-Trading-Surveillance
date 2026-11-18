@@ -130,7 +130,7 @@ router.get('/notes/search', authenticate, requireRole('ANALYST', 'ADMIN'), async
 });
 
 // Known Patterns
-router.get('/patterns', authenticate, async (_req: AuthenticatedRequest, res: Response) => {
+router.get('/patterns', authenticate, requireRole('ANALYST', 'ADMIN'), async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const db = await getDatabase();
     const result = await db.query('SELECT * FROM surveillance_patterns ORDER BY pattern_id ASC');

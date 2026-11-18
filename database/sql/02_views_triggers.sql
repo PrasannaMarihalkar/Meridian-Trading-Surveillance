@@ -86,8 +86,8 @@ DECLARE
     v_audit_id BIGINT;
 BEGIN
     IF (TG_OP = 'UPDATE' AND (OLD.status <> NEW.status OR OLD.filled_qty <> NEW.filled_qty)) THEN
-        -- Generate unique sequential audit ID from epoch microseconds
-        v_audit_id := (EXTRACT(EPOCH FROM NOW()) * 1000000)::BIGINT + (random() * 1000)::INT;
+        -- Generate unique sequential audit ID from explicit atomic sequence
+        v_audit_id := nextval('audit_log_id_seq');
         
         INSERT INTO audit_log (audit_id, occurred_at, actor_user_id, action, entity_type, entity_id, old_data, new_data)
         VALUES (

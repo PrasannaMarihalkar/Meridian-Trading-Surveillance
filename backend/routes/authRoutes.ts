@@ -1,6 +1,9 @@
 import { Router, Response } from 'express';
 import { AuthService } from '../services/authService';
-import { authenticate, AuthenticatedRequest } from '../middleware/auth';
+import { authenticate, requireRole, AuthenticatedRequest } from '../middleware/auth';
+import { getDatabase } from '../../database/db';
+import { wsTicketManager } from '../services/wsTicketManager';
+import { revokeWsSession, revokeWsUser } from '../websocket';
 import { z } from 'zod';
 
 const router = Router();
@@ -9,7 +12,16 @@ function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-const RegisterSchema = z.object({
+// Public registration is restricted strictly to TRADER role
+const PublicRegisterSchema = z.object({
+  email: z.string().email(),
+  username: z.string().min(3).max(30),
+  password: z.string().min(8),
+  role: z.enum(['TRADER']).optional().default('TRADER')
+});
+
+// Admin-only user provisioning schema for all roles
+const AdminCreateUserSchema = z.object({
   email: z.string().email(),
   username: z.string().min(3).max(30),
   password: z.string().min(8),
@@ -23,11 +35,25 @@ const LoginSchema = z.object({
 
 router.post('/register', async (req, res: Response) => {
   try {
-    const validated = RegisterSchema.parse(req.body);
-    const result = await AuthService.register(validated);
+    const validated = PublicRegisterSchema.parse(req.body);
+    const result = await AuthService.register({
+      ...validated,
+      role: 'TRADER'
+    });
     res.status(201).json(result);
   } catch (err) {
     res.status(400).json({ error: getErrorMessage(err) || 'Registration failed' });
+  }
+});
+
+// Protected: Only existing ADMINs can provision ANALYST or ADMIN accounts
+router.post('/users', authenticate, requireRole('ADMIN'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const validated = AdminCreateUserSchema.parse(req.body);
+    const result = await AuthService.register(validated);
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(400).json({ error: getErrorMessage(err) || 'User provisioning failed' });
   }
 });
 
@@ -61,8 +87,64 @@ router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response)
   }
 });
 
-router.post('/logout', authenticate, (_req, res) => {
-  res.json({ message: 'Successfully logged out' });
+// Admin: Deactivate/activate user and revoke live sessions
+router.patch('/users/:id/status', authenticate, requireRole('ADMIN'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const targetUserId = parseInt(req.params.id as string, 10);
+    const { isActive } = z.object({ isActive: z.boolean() }).parse(req.body);
+    const db = await getDatabase();
+    const result = await db.query(
+      'UPDATE users SET is_active = $1 WHERE user_id = $2 RETURNING user_id, username, is_active',
+      [isActive, targetUserId]
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    if (!isActive) {
+      await db.query('DELETE FROM sessions WHERE user_id = $1', [targetUserId]);
+      revokeWsUser(targetUserId);
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: getErrorMessage(err) });
+  }
+});
+
+// Issue Short-Lived Single-Use WebSocket Ticket
+router.post('/ws-ticket', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const ticket = await wsTicketManager.issueTicket(req.user, 30000);
+    res.json({ ticket, expiresIn: 30 });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) || 'Failed to issue WebSocket ticket' });
+  }
+});
+
+router.post('/logout', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.user?.sessionId) {
+      const db = await getDatabase();
+      await db.query('DELETE FROM sessions WHERE session_id = $1', [req.user.sessionId]);
+      revokeWsSession(req.user.sessionId);
+      try {
+        await db.query(
+          `INSERT INTO audit_log (occurred_at, actor_user_id, action, entity_type, entity_id, new_data)
+           VALUES (NOW(), $1, 'USER_LOGOUT', 'sessions', $2, $3)`,
+          [req.user.userId, req.user.sessionId, JSON.stringify({ ip: req.ip })]
+        );
+      } catch {
+        // Non-critical audit log fallback
+      }
+    }
+    res.json({ message: 'Successfully logged out' });
+  } catch (err) {
+    res.status(500).json({ error: getErrorMessage(err) || 'Logout failed' });
+  }
 });
 
 export default router;

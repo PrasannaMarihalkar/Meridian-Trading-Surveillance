@@ -3,6 +3,7 @@
 #include <string>
 #include <sstream>
 #include <map>
+#include <unordered_set>
 
 using namespace meridian;
 
@@ -14,6 +15,7 @@ int main() {
     for (InstrumentId id = 1; id <= 5; ++id) {
         books.emplace(id, OrderBook(id, 500));
     }
+    std::unordered_set<OrderId> active_order_ids;
 
     std::cerr << "[MERIDIAN_ENGINE] C++ Price-Time Matching Engine initialized for 5 instruments." << std::endl;
 
@@ -27,7 +29,7 @@ int main() {
 
         std::stringstream ss(line);
         std::string cmd;
-        ss >> cmd;
+        if (!(ss >> cmd)) continue;
 
         if (cmd == "ORDER") {
             OrderId oid;
@@ -37,34 +39,64 @@ int main() {
             double price_dbl;
             Quantity qty;
 
-            if (ss >> oid >> aid >> iid >> side_str >> type_str >> price_dbl >> qty) {
-                auto book_it = books.find(iid);
-                if (book_it == books.end()) {
-                    std::cout << "REJECT " << oid << " UNKNOWN_INSTRUMENT" << std::endl;
-                    continue;
-                }
+            if (!(ss >> oid >> aid >> iid >> side_str >> type_str >> price_dbl >> qty)) {
+                std::cout << "REJECT 0 MALFORMED_COMMAND" << std::endl;
+                continue;
+            }
 
-                Order o;
-                o.order_id = oid;
-                o.account_id = aid;
-                o.instrument_id = iid;
-                o.side = (side_str == "BUY") ? Side::BUY : Side::SELL;
-                o.order_type = (type_str == "MARKET") ? OrderType::MARKET :
-                               (type_str == "IOC") ? OrderType::IOC : OrderType::LIMIT;
-                o.price = double_to_price(price_dbl);
-                o.quantity = qty;
+            if (active_order_ids.count(oid) > 0) {
+                std::cout << "REJECT " << oid << " DUPLICATE_ORDER_ID" << std::endl;
+                continue;
+            }
 
-                auto trades = book_it->second.process_order(o);
-                std::cout << "ACK " << oid << " " << order_status_to_string(o.status)
-                          << " " << o.filled_qty << " " << trades.size() << std::endl;
+            if (qty <= 0) {
+                std::cout << "REJECT " << oid << " INVALID_QUANTITY" << std::endl;
+                continue;
+            }
 
-                for (const auto& t : trades) {
-                    std::cout << "TRADE " << t.engine_seq << " " << t.instrument_id << " "
-                              << t.buy_order_id << " " << t.sell_order_id << " "
-                              << t.buyer_account_id << " " << t.seller_account_id << " "
-                              << price_to_double(t.price) << " " << t.quantity << " "
-                              << side_to_string(t.aggressor_side) << std::endl;
-                }
+            if (side_str != "BUY" && side_str != "SELL") {
+                std::cout << "REJECT " << oid << " INVALID_SIDE" << std::endl;
+                continue;
+            }
+
+            if (type_str != "LIMIT" && type_str != "MARKET" && type_str != "IOC") {
+                std::cout << "REJECT " << oid << " INVALID_TYPE" << std::endl;
+                continue;
+            }
+
+            if (type_str != "MARKET" && price_dbl <= 0.0) {
+                std::cout << "REJECT " << oid << " INVALID_PRICE" << std::endl;
+                continue;
+            }
+
+            auto book_it = books.find(iid);
+            if (book_it == books.end()) {
+                std::cout << "REJECT " << oid << " UNKNOWN_INSTRUMENT" << std::endl;
+                continue;
+            }
+
+            Order o;
+            o.order_id = oid;
+            o.account_id = aid;
+            o.instrument_id = iid;
+            o.side = (side_str == "BUY") ? Side::BUY : Side::SELL;
+            o.order_type = (type_str == "MARKET") ? OrderType::MARKET :
+                           (type_str == "IOC") ? OrderType::IOC : OrderType::LIMIT;
+            o.price = double_to_price(price_dbl);
+            o.quantity = qty;
+
+            auto trades = book_it->second.process_order(o);
+            active_order_ids.insert(oid);
+
+            std::cout << "ACK " << oid << " " << order_status_to_string(o.status)
+                      << " " << o.filled_qty << " " << trades.size() << std::endl;
+
+            for (const auto& t : trades) {
+                std::cout << "TRADE " << t.engine_seq << " " << t.instrument_id << " "
+                          << t.buy_order_id << " " << t.sell_order_id << " "
+                          << t.buyer_account_id << " " << t.seller_account_id << " "
+                          << price_to_double(t.price) << " " << t.quantity << " "
+                          << side_to_string(t.aggressor_side) << std::endl;
             }
         } else if (cmd == "CANCEL") {
             OrderId oid;
@@ -72,10 +104,13 @@ int main() {
             if (ss >> oid >> iid) {
                 auto book_it = books.find(iid);
                 if (book_it != books.end() && book_it->second.cancel_order(oid)) {
+                    active_order_ids.erase(oid);
                     std::cout << "CANCELLED " << oid << std::endl;
                 } else {
                     std::cout << "CANCEL_REJECTED " << oid << std::endl;
                 }
+            } else {
+                std::cout << "CANCEL_REJECTED 0 MALFORMED_COMMAND" << std::endl;
             }
         } else if (cmd == "SNAPSHOT") {
             InstrumentId iid;
@@ -90,10 +125,14 @@ int main() {
                     for (const auto& a : snap.asks) {
                         std::cout << "  ASK " << price_to_double(a.price) << " " << a.total_qty << " (" << a.order_count << ")" << std::endl;
                     }
+                } else {
+                    std::cout << "SNAPSHOT_REJECTED " << iid << " UNKNOWN_INSTRUMENT" << std::endl;
                 }
             }
         } else if (cmd == "QUIT" || cmd == "EXIT") {
             break;
+        } else {
+            std::cout << "REJECT 0 UNKNOWN_COMMAND" << std::endl;
         }
     }
 

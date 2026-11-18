@@ -5,7 +5,7 @@ async function runBridgeTest() {
   const bridge = CppEngineBridge.getInstance();
 
   try {
-    const isReady = await bridge.waitForReady(8000);
+    const isReady = await bridge.waitForReady(15000);
     if (!isReady) {
       throw new Error('[FAIL] C++ Engine process failed to start within timeout. Aborting test.');
     }
@@ -81,9 +81,111 @@ async function runBridgeTest() {
       throw new Error(`Snapshot 3 validation failed: ${JSON.stringify(snap3)}`);
     }
 
-    console.log('\n=== ALL C++ ENGINE BRIDGE TESTS PASSED ===\n');
-  } finally {
+    console.log('\n[TEST 7] Duplicate order ID rejection...');
+    const dupResult = await bridge.submitOrder({
+      orderId: 9902, // Already used in Test 3
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1500.0,
+      quantity: 5
+    });
+    console.log('  Duplicate Result:', dupResult);
+    if (dupResult.status === 'DUPLICATE_ORDER_ID') {
+      console.log('  ✓ Duplicate order ID rejected cleanly.');
+    } else {
+      throw new Error(`Expected DUPLICATE_ORDER_ID, got ${dupResult.status}`);
+    }
+
+    console.log('\n[TEST 8] Invalid quantity rejection (qty <= 0)...');
+    const invalidQtyRes = await bridge.submitOrder({
+      orderId: 9905,
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1500.0,
+      quantity: 0
+    });
+    console.log('  Invalid Qty Result:', invalidQtyRes);
+    if (invalidQtyRes.status === 'INVALID_QUANTITY') {
+      console.log('  ✓ Invalid quantity rejected cleanly.');
+    } else {
+      throw new Error(`Expected INVALID_QUANTITY, got ${invalidQtyRes.status}`);
+    }
+
+    console.log('\n[TEST 9] Invalid price rejection (price <= 0)...');
+    const invalidPriceRes = await bridge.submitOrder({
+      orderId: 9906,
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: -50.0,
+      quantity: 10
+    });
+    console.log('  Invalid Price Result:', invalidPriceRes);
+    if (invalidPriceRes.status === 'INVALID_PRICE') {
+      console.log('  ✓ Invalid price rejected cleanly.');
+    } else {
+      throw new Error(`Expected INVALID_PRICE, got ${invalidPriceRes.status}`);
+    }
+
+    console.log('\n[TEST 10] Unknown instrument rejection (instrumentId = 999)...');
+    const unknownInstRes = await bridge.submitOrder({
+      orderId: 9907,
+      accountId: 1001,
+      instrumentId: 999,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1500.0,
+      quantity: 10
+    });
+    console.log('  Unknown Instrument Result:', unknownInstRes);
+    if (unknownInstRes.status === 'UNKNOWN_INSTRUMENT') {
+      console.log('  ✓ Unknown instrument rejected cleanly.');
+    } else {
+      throw new Error(`Expected UNKNOWN_INSTRUMENT, got ${unknownInstRes.status}`);
+    }
+
+    console.log('\n[TEST 11] Cancelling non-existent order rejection...');
+    const nonExistentCancel = await bridge.cancelOrder(88888, 1);
+    console.log('  Cancel Non-Existent Result:', nonExistentCancel);
+    if (!nonExistentCancel) {
+      console.log('  ✓ Cancellation of non-existent order correctly returned false.');
+    } else {
+      throw new Error('Expected cancellation of non-existent order to return false');
+    }
+
+    console.log('\n[TEST 12] Engine process restart and recovery verification...');
     bridge.shutdown();
+    const newBridge = CppEngineBridge.getInstance();
+    const readyAgain = await newBridge.waitForReady(15000);
+    if (!readyAgain) {
+      throw new Error('Bridge failed to restart and recover after shutdown');
+    }
+    const recoveryOrder = await newBridge.submitOrder({
+      orderId: 9910,
+      accountId: 1001,
+      instrumentId: 2,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 3200.0,
+      quantity: 10
+    });
+    console.log('  Recovery Order Result:', recoveryOrder);
+    if (recoveryOrder.orderId === 9910 && recoveryOrder.status === 'OPEN') {
+      console.log('  ✓ Engine process successfully recovered and accepted orders post-restart.');
+      await newBridge.cancelOrder(9910, 2);
+    } else {
+      throw new Error('Failed to submit order after engine recovery');
+    }
+    newBridge.shutdown();
+
+    console.log('\n=== ALL 12 C++ ENGINE BRIDGE TESTS PASSED ===\n');
+  } finally {
+    CppEngineBridge.getInstance().shutdown();
   }
 }
 

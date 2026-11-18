@@ -281,6 +281,17 @@ void test_gap_detector() {
     assert(sat_detector.gaps().size() == GapDetector::kMaxTrackedGaps - 1);
     assert(sat_detector.out_of_order() == 1);
 
+    // 11. Split-gap saturation test:
+    // With 511 gaps in sat_detector, introduce multi-packet gap to bring gap count to 512.
+    sat_detector.on_packet(3000, 20000); // introduces gap [2*513, 2999]
+    assert(sat_detector.gaps().size() == GapDetector::kMaxTrackedGaps);
+    uint64_t prev_sat = sat_detector.gaps_saturated();
+    // Packet 2500 arrives out-of-order in the middle of gap [2*513, 2999]
+    // Since capacity is full (512), splitting would require 513 entries.
+    // The second half must saturate safely (incrementing gaps_saturated_) without heap allocation.
+    sat_detector.on_packet(2500, 20050);
+    assert(sat_detector.gaps_saturated() == prev_sat + 1);
+
     std::cout << "  ✓ test_gap_detector passed (exhaustive: sequential, large jumps, bit clearing, splits, stale, duplicates, saturation)" << std::endl;
 }
 

@@ -41,11 +41,16 @@ export class SurveillanceService {
       `SELECT 
          COUNT(*)::INT AS total_orders,
          COUNT(*) FILTER (WHERE status = 'CANCELLED')::INT AS cancelled_orders,
-         COALESCE(AVG(CASE 
-           WHEN status = 'CANCELLED' AND cancel_requested_at IS NOT NULL 
-           THEN EXTRACT(EPOCH FROM (cancel_requested_at - submitted_at)) * 1000 
-           ELSE NULL 
-         END), 250)::FLOAT AS avg_lifetime_ms,
+         COALESCE(
+           PERCENTILE_CONT(0.5) WITHIN GROUP (
+             ORDER BY CASE 
+               WHEN status = 'CANCELLED' AND cancel_requested_at IS NOT NULL 
+               THEN EXTRACT(EPOCH FROM (cancel_requested_at - submitted_at)) * 1000 
+               ELSE NULL 
+             END
+           ),
+           250
+         )::FLOAT AS median_lifetime_ms,
          COUNT(*) FILTER (WHERE side = 'BUY')::INT AS buy_orders,
          COUNT(*) FILTER (WHERE side = 'SELL')::INT AS sell_orders,
          COALESCE(SUM(quantity) FILTER (WHERE side = 'BUY'), 0)::BIGINT AS buy_qty,
@@ -81,7 +86,7 @@ export class SurveillanceService {
     const tradeStats = tradeStatsRes.rows[0];
     const fillStats = fillStatsRes.rows[0];
 
-    const ordersPlaced = stats.total_orders || 1;
+    const ordersPlaced = stats.total_orders || 0;
     const ordersCanceled = stats.cancelled_orders || 0;
     const tradesExecuted = tradeStats.executed_trades || 0;
 
@@ -89,37 +94,41 @@ export class SurveillanceService {
     const cancelRatio = ordersPlaced > 0 ? ordersCanceled / ordersPlaced : 0;
 
     // Feature 2: quote_to_trade_ratio
-    const quoteToTrade = tradesExecuted > 0 ? ordersPlaced / tradesExecuted : ordersPlaced;
+    const quoteToTrade = ordersPlaced === 0 ? 0 : (tradesExecuted > 0 ? ordersPlaced / tradesExecuted : ordersPlaced);
 
-    // Feature 3: median_lifetime_ms
-    const medianLifetime = stats.avg_lifetime_ms || 300.0;
+    // Feature 3: median_lifetime_ms (Statistical Median)
+    const medianLifetime = stats.median_lifetime_ms !== null && stats.median_lifetime_ms !== undefined
+      ? parseFloat(String(stats.median_lifetime_ms))
+      : 250.0;
 
-    // Feature 4: size_skew
-    const totalSideOrders = stats.buy_orders + stats.sell_orders;
-    const sizeSkew = totalSideOrders > 0 ? Math.abs(stats.buy_orders - stats.sell_orders) / totalSideOrders : 0;
+    // Feature 4: size_skew (Volume-weighted ratio)
+    const buyVol = parseInt(stats.buy_qty, 10) || 0;
+    const sellVol = parseInt(stats.sell_qty, 10) || 0;
+    const totalVolume = buyVol + sellVol;
+    const sizeSkew = totalVolume > 0 ? Math.abs(buyVol - sellVol) / totalVolume : 0;
 
     // Feature 5: msg_rate_per_s
     const windowSeconds = Math.max(1, (end.getTime() - start.getTime()) / 1000);
     const msgRate = (ordersPlaced + ordersCanceled) / windowSeconds;
 
-    // Feature 6: book_imbalance_impact (derived from order quantity disparity)
+    // Feature 6: book_imbalance_impact (derived from order quantity disparity; 0.0 if empty window)
     const totalOrderQty = (parseInt(stats.buy_qty, 10) + parseInt(stats.sell_qty, 10)) || 0;
     const bookImbalance = totalOrderQty > 0 
       ? Math.abs(parseInt(stats.buy_qty, 10) - parseInt(stats.sell_qty, 10)) / totalOrderQty 
-      : (cancelRatio > 0.7 ? 0.75 : 0.15);
+      : 0.0;
 
-    // Feature 7: opposite_side_fill_ratio (fills executed opposite to dominant quote side)
+    // Feature 7: opposite_side_fill_ratio (fills executed opposite to dominant quote side; 0.0 if no fills)
     const totalFills = fillStats.total_fills || 0;
     const dominantSide = stats.buy_orders >= stats.sell_orders ? 'BUY' : 'SELL';
     const oppFills = dominantSide === 'BUY' ? fillStats.sell_fills : fillStats.buy_fills;
     const oppFillRatio = totalFills > 0 
       ? oppFills / totalFills 
-      : (cancelRatio > 0.8 ? 0.08 : 0.45);
+      : 0.0;
 
-    // Feature 8: layering_depth (number of distinct price tiers populated)
+    // Feature 8: layering_depth (number of distinct price tiers populated; 0.0 if none)
     const layeringDepth = stats.distinct_price_levels > 0 
       ? stats.distinct_price_levels 
-      : (cancelRatio > 0.75 ? 3.5 : 0.5);
+      : 0.0;
 
     const featureVector = [
       parseFloat(cancelRatio.toFixed(2)),
@@ -142,10 +151,7 @@ export class SurveillanceService {
       label = 'SUSPECTED_QUOTE_STUFFING';
     }
 
-    // 2. Insert Surveillance Session
-    const sidRes = await db.query('SELECT COALESCE(MAX(session_id), 7000) + 1 AS next_sid FROM surveillance_sessions');
-    const sessionId = parseInt(sidRes.rows[0].next_sid, 10);
-
+    // 2. Insert Surveillance Session using atomic sequence
     const sessionRes = await db.query<SurveillanceSession>(
       `INSERT INTO surveillance_sessions (
          session_id, account_id, instrument_id, window_start, window_end,
@@ -153,10 +159,9 @@ export class SurveillanceService {
          order_cancel_ratio, quote_to_trade_ratio, median_lifetime_ms,
          size_skew, msg_rate_per_s, book_imbalance_impact, opposite_side_fill_ratio,
          layering_depth, features, label, created_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW())
+       ) VALUES (nextval('surveillance_sessions_id_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
        RETURNING *`,
       [
-        sessionId,
         params.accountId,
         params.instrumentId,
         start.toISOString(),
@@ -195,9 +200,6 @@ export class SurveillanceService {
 
     // Trigger alert threshold (sim >= 0.85 and abnormal label)
     if (bestMatch && (maxSim >= 0.85 || label !== 'NORMAL_ACTIVITY')) {
-      const aidRes = await db.query('SELECT COALESCE(MAX(alert_id), 8000) + 1 AS next_aid FROM alerts');
-      const nextAlertId = parseInt(aidRes.rows[0].next_aid, 10);
-
       const severity: AlertSeverity = maxSim >= 0.95 ? 'CRITICAL' : maxSim >= 0.88 ? 'HIGH' : 'MEDIUM';
       const ruleFlags = [];
       if (cancelRatio >= 0.8) ruleFlags.push('HIGH_CANCEL_RATIO');
@@ -207,9 +209,9 @@ export class SurveillanceService {
 
       const alertRes = await db.query<Alert>(
         `INSERT INTO alerts (alert_id, session_id, pattern_id, similarity, rule_flags, severity, status, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'OPEN', NOW())
+         VALUES (nextval('alerts_id_seq'), $1, $2, $3, $4, $5, 'OPEN', NOW())
          RETURNING *`,
-        [nextAlertId, session.session_id, bestMatch.pattern_id, maxSim, ruleFlags, severity]
+        [session.session_id, bestMatch.pattern_id, maxSim, ruleFlags, severity]
       );
       alert = alertRes.rows[0];
 
@@ -233,10 +235,29 @@ export class SurveillanceService {
    */
   static async assignAlert(alertId: number, analystId: number) {
     const db = await getDatabase();
+
+    const userRes = await db.query(
+      `SELECT user_id, role, is_active FROM users WHERE user_id = $1`,
+      [analystId]
+    );
+    if (userRes.rows.length === 0) {
+      throw new Error(`User with ID ${analystId} does not exist`);
+    }
+    const targetUser = userRes.rows[0];
+    if (!targetUser.is_active) {
+      throw new Error(`User ${analystId} is deactivated and cannot be assigned alerts`);
+    }
+    if (targetUser.role !== 'ANALYST' && targetUser.role !== 'ADMIN') {
+      throw new Error(`User ${analystId} has role ${targetUser.role}; alerts can only be assigned to ANALYST or ADMIN`);
+    }
+
     const res = await db.query<Alert>(
       `UPDATE alerts SET assigned_to = $1, status = 'IN_REVIEW' WHERE alert_id = $2 RETURNING *`,
       [analystId, alertId]
     );
+    if (res.rows.length === 0) {
+      throw new Error(`Alert with ID ${alertId} not found`);
+    }
     return res.rows[0];
   }
 
@@ -254,18 +275,15 @@ export class SurveillanceService {
   }
 
   /**
-   * Add Investigation Note
+   * Add Investigation Note using atomic sequence
    */
   static async addNote(alertId: number, authorId: number, body: string) {
     const db = await getDatabase();
-    const nidRes = await db.query('SELECT COALESCE(MAX(note_id), 8100) + 1 AS next_nid FROM alert_notes');
-    const noteId = parseInt(nidRes.rows[0].next_nid, 10);
-
     const res = await db.query<AlertNote>(
       `INSERT INTO alert_notes (note_id, alert_id, author_id, body, created_at)
-       VALUES ($1, $2, $3, $4, NOW())
+       VALUES (nextval('alert_notes_id_seq'), $1, $2, $3, NOW())
        RETURNING note_id, alert_id, author_id, body, created_at`,
-      [noteId, alertId, authorId, body]
+      [alertId, authorId, body]
     );
     return res.rows[0];
   }

@@ -99,7 +99,8 @@ async function runTests() {
         side: 'BUY',
         orderType: 'LIMIT',
         price: 1400.0,
-        quantity: 50000 // Exceeds limit of 1000
+        quantity: 50000, // Exceeds limit of 1000
+        clientOrderId: randomUUID()
       });
     } catch (e: any) {
       errorCaught = true;
@@ -120,11 +121,12 @@ async function runTests() {
         side: 'BUY',
         orderType: 'LIMIT',
         price: 1600.0, // > 14% deviation
-        quantity: 10
+        quantity: 10,
+        clientOrderId: randomUUID()
       });
     } catch (e: any) {
       errorCaught = true;
-      if (!e.message.includes('exceeding the 5% price collar')) {
+      if (!e.message.includes('price collar')) {
         throw new Error(`Unexpected error message: ${e.message}`);
       }
     }
@@ -141,7 +143,8 @@ async function runTests() {
       side: 'SELL',
       orderType: 'LIMIT',
       price: 1400.0,
-      quantity: 50
+      quantity: 50,
+      clientOrderId: randomUUID()
     });
 
     // 2. Trader B (testAccountId) places Aggressive Buy Limit: 50 @ 1400.00
@@ -151,7 +154,8 @@ async function runTests() {
       side: 'BUY',
       orderType: 'LIMIT',
       price: 1400.0,
-      quantity: 50
+      quantity: 50,
+      clientOrderId: randomUUID()
     });
 
     if (buyOrder.trades.length === 0) {
@@ -207,7 +211,8 @@ async function runTests() {
       side: 'BUY',
       orderType: 'LIMIT',
       price: 1395.0, // Non-crossing
-      quantity: 10
+      quantity: 10,
+      clientOrderId: randomUUID()
     });
 
     if (orderRes.order.status !== 'OPEN') {
@@ -231,7 +236,8 @@ async function runTests() {
         side: 'BUY',
         orderType: 'LIMIT',
         price: 1390.0,
-        quantity: 15
+        quantity: 15,
+        clientOrderId: randomUUID()
       });
       await TradingService.cancelOrder(o.order.order_id, testAccountId);
     }

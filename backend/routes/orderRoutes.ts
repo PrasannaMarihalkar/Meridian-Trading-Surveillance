@@ -14,7 +14,7 @@ const PlaceOrderSchema = z.object({
   accountId: z.number().int().positive().optional(),
   instrumentId: z.number().int().positive(),
   side: z.enum(['BUY', 'SELL']),
-  orderType: z.enum(['LIMIT', 'MARKET', 'IOC']),
+  orderType: z.enum(['LIMIT', 'MARKET']),
   timeInForce: z.enum(['DAY', 'GTC', 'IOC', 'FOK']).optional(),
   price: z.number().nonnegative(),
   quantity: z.number().int().positive(),
@@ -45,6 +45,12 @@ router.post('/', authenticate, async (req: AuthenticatedRequest, res: Response) 
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(idempotencyKey)) {
       res.status(400).json({ error: 'Invalid idempotency key format: must be a valid UUID' });
+      return;
+    }
+
+    // Strict Role-Based Access Control: Analysts are prohibited from submitting trading orders
+    if (req.user?.role === 'ANALYST') {
+      res.status(403).json({ error: 'Forbidden: Analysts are not permitted to submit trading orders' });
       return;
     }
 
@@ -147,12 +153,27 @@ router.post('/:id/cancel', authenticate, async (req: AuthenticatedRequest, res: 
     }
 
     const targetAccountId = parseInt(orderRes.rows[0].account_id, 10);
-    if (req.user?.role === 'TRADER' && req.user.accountId !== targetAccountId) {
-      res.status(403).json({ error: 'Forbidden: Cannot cancel order belonging to another trader' });
+    const userRole = req.user?.role;
+    let adminAudit: { actorUserId: number; reason: string } | undefined;
+
+    if (userRole === 'ADMIN') {
+      const reason = req.body?.reason;
+      if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+        res.status(400).json({ error: 'Administrative cancellation requires a non-empty reason' });
+        return;
+      }
+      adminAudit = {
+        actorUserId: req.user!.userId,
+        reason: reason.trim()
+      };
+    } else if (userRole === 'TRADER' && req.user?.accountId === targetAccountId) {
+      // Trader is authorized to cancel their own order without admin audit record
+    } else {
+      res.status(403).json({ error: 'Forbidden: Insufficient permissions to cancel order' });
       return;
     }
 
-    const cancelledOrder = await TradingService.cancelOrder(orderId, targetAccountId);
+    const cancelledOrder = await TradingService.cancelOrder(orderId, targetAccountId, adminAudit);
     res.json({ message: 'Order cancelled successfully', order: cancelledOrder });
   } catch (err) {
     res.status(400).json({ error: getErrorMessage(err) });

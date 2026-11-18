@@ -19,9 +19,23 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Reverse proxy hardening
+app.set('trust proxy', 1);
+
 // Security & Middlewares
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+  : ['http://localhost:3000', 'http://localhost:4000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:4000', 'http://127.0.0.1:5173'];
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS origin denied'));
+    }
+  },
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Idempotency-Key']
 }));
@@ -75,9 +89,10 @@ app.use((req: Request, res: Response) => {
 // Global Error Handler
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error('[SERVER_ERROR]', err);
+  const isProd = process.env.NODE_ENV === 'production';
   res.status(500).json({
     error: 'Internal Server Error',
-    message: err.message || 'An unexpected error occurred'
+    message: isProd ? 'An internal server error occurred' : (err.message || 'An unexpected error occurred')
   });
 });
 

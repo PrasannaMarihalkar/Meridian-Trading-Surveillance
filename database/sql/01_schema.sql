@@ -40,9 +40,13 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 -- DOMAIN 1: IDENTITY AND ACCOUNTS
 -- ----------------------------------------------------------------------------
 
+-- Sequences for atomic identity and account management
+CREATE SEQUENCE IF NOT EXISTS user_id_seq START WITH 200;
+CREATE SEQUENCE IF NOT EXISTS account_id_seq START WITH 2000;
+
 -- Table 1: users
 CREATE TABLE IF NOT EXISTS users (
-    user_id BIGINT PRIMARY KEY,
+    user_id BIGINT PRIMARY KEY DEFAULT nextval('user_id_seq'),
     email TEXT NOT NULL UNIQUE,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
@@ -64,9 +68,20 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_agent TEXT
 );
 
+-- Table: ws_tickets (PostgreSQL-backed single-use WebSocket authentication tickets)
+CREATE TABLE IF NOT EXISTS ws_tickets (
+    ticket_hash TEXT PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    session_id UUID NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+    account_id BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ws_tickets_expires_at ON ws_tickets(expires_at);
+
 -- Table 3: accounts
 CREATE TABLE IF NOT EXISTS accounts (
-    account_id BIGINT PRIMARY KEY,
+    account_id BIGINT PRIMARY KEY DEFAULT nextval('account_id_seq'),
     user_id BIGINT NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE RESTRICT,
     owner_role user_role NOT NULL,
     cash_balance NUMERIC(20,4) NOT NULL DEFAULT 0.0000,
@@ -112,7 +127,7 @@ CREATE TABLE IF NOT EXISTS instruments (
 
 -- Table 6: orders
 CREATE TABLE IF NOT EXISTS orders (
-    order_id BIGINT PRIMARY KEY,
+    order_id BIGINT PRIMARY KEY DEFAULT nextval('order_id_seq'),
     client_order_id UUID NOT NULL UNIQUE,
     account_id BIGINT NOT NULL REFERENCES accounts(account_id) ON DELETE RESTRICT,
     instrument_id SMALLINT NOT NULL REFERENCES instruments(instrument_id) ON DELETE RESTRICT,
@@ -131,8 +146,8 @@ CREATE TABLE IF NOT EXISTS orders (
 
 -- Table 7: trades
 CREATE TABLE IF NOT EXISTS trades (
-    trade_id BIGINT PRIMARY KEY,
-    engine_seq BIGINT NOT NULL UNIQUE,
+    trade_id BIGINT PRIMARY KEY DEFAULT nextval('trade_id_seq'),
+    engine_seq BIGINT NOT NULL UNIQUE DEFAULT nextval('engine_seq_gen'),
     instrument_id SMALLINT NOT NULL REFERENCES instruments(instrument_id) ON DELETE RESTRICT,
     executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     price NUMERIC(18,4) NOT NULL CHECK (price > 0),
@@ -148,7 +163,7 @@ CREATE TABLE IF NOT EXISTS trades (
 
 -- Table 8: fills
 CREATE TABLE IF NOT EXISTS fills (
-    fill_id BIGINT PRIMARY KEY,
+    fill_id BIGINT PRIMARY KEY DEFAULT nextval('fill_id_seq'),
     trade_id BIGINT NOT NULL REFERENCES trades(trade_id) ON DELETE RESTRICT,
     order_id BIGINT NOT NULL REFERENCES orders(order_id) ON DELETE RESTRICT,
     account_id BIGINT NOT NULL REFERENCES accounts(account_id) ON DELETE RESTRICT,
@@ -186,9 +201,14 @@ CREATE TABLE IF NOT EXISTS watchlists (
 -- DOMAIN 3: SURVEILLANCE & COMPLIANCE
 -- ----------------------------------------------------------------------------
 
+-- Sequences for surveillance and alert entities
+CREATE SEQUENCE IF NOT EXISTS surveillance_sessions_id_seq START WITH 2000;
+CREATE SEQUENCE IF NOT EXISTS alerts_id_seq START WITH 6000;
+CREATE SEQUENCE IF NOT EXISTS alert_notes_id_seq START WITH 11000;
+
 -- Table 11: surveillance_sessions
 CREATE TABLE IF NOT EXISTS surveillance_sessions (
-    session_id BIGINT PRIMARY KEY,
+    session_id BIGINT PRIMARY KEY DEFAULT nextval('surveillance_sessions_id_seq'),
     account_id BIGINT NOT NULL REFERENCES accounts(account_id) ON DELETE RESTRICT,
     instrument_id SMALLINT NOT NULL REFERENCES instruments(instrument_id) ON DELETE RESTRICT,
     window_start TIMESTAMPTZ NOT NULL,
@@ -224,7 +244,7 @@ CREATE TABLE IF NOT EXISTS surveillance_patterns (
 
 -- Table 13: alerts
 CREATE TABLE IF NOT EXISTS alerts (
-    alert_id BIGINT PRIMARY KEY,
+    alert_id BIGINT PRIMARY KEY DEFAULT nextval('alerts_id_seq'),
     session_id BIGINT NOT NULL UNIQUE REFERENCES surveillance_sessions(session_id) ON DELETE CASCADE,
     pattern_id SMALLINT NOT NULL REFERENCES surveillance_patterns(pattern_id) ON DELETE RESTRICT,
     similarity DOUBLE PRECISION NOT NULL CHECK (similarity >= 0 AND similarity <= 1),
@@ -238,7 +258,7 @@ CREATE TABLE IF NOT EXISTS alerts (
 
 -- Table 14: alert_notes
 CREATE TABLE IF NOT EXISTS alert_notes (
-    note_id BIGINT PRIMARY KEY,
+    note_id BIGINT PRIMARY KEY DEFAULT nextval('alert_notes_id_seq'),
     alert_id BIGINT NOT NULL REFERENCES alerts(alert_id) ON DELETE CASCADE,
     author_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
     body TEXT NOT NULL,
@@ -259,9 +279,11 @@ CREATE TABLE IF NOT EXISTS surveillance_feature_stats (
 -- DOMAIN 4: SYSTEM TABLES
 -- ----------------------------------------------------------------------------
 
+CREATE SEQUENCE IF NOT EXISTS audit_log_id_seq START WITH 1;
+
 -- Table 16: audit_log
 CREATE TABLE IF NOT EXISTS audit_log (
-    audit_id BIGINT PRIMARY KEY,
+    audit_id BIGINT PRIMARY KEY DEFAULT nextval('audit_log_id_seq'),
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     actor_user_id BIGINT,
     action TEXT NOT NULL,

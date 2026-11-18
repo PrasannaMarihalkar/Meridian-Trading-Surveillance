@@ -264,4 +264,15 @@ private:
     std::size_t num_gaps_{0};
 };
 
+/**
+ * Compile-time assertion verifying strict deterministic memory boundedness.
+ * Fixed memory footprint:
+ *   - window_bitmap_: 1024 * 8 bytes = 8,192 bytes
+ *   - gaps_: 512 * 24 bytes          = 12,288 bytes
+ *   - num_gaps_: 8 bytes             = 8 bytes
+ *   - scalar members & alignment:    = 72 bytes
+ *   Total = 20,560 bytes (zero heap allocation, fits comfortably in L2 CPU cache)
+ */
+static_assert(sizeof(GapDetector) == 20560, "GapDetector memory footprint must be exactly 20,560 bytes");
+
 } // namespace meridian

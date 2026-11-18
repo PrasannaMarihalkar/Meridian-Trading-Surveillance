@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthTokenPayload, UserRole } from '../types';
+import { getDatabase } from '../../database/db';
 
 if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   throw new Error('[FATAL_SECURITY] JWT_SECRET environment variable must be explicitly defined in production.');
@@ -12,7 +13,7 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthTokenPayload;
 }
 
-export function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+export async function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Unauthorized: Missing or invalid token format' });
@@ -22,7 +23,41 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
   const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as AuthTokenPayload;
-    req.user = decoded;
+    if (!decoded.sessionId) {
+      res.status(401).json({ error: 'Unauthorized: Missing session identifier' });
+      return;
+    }
+
+    const db = await getDatabase();
+    const sessionRes = await db.query(
+      `SELECT s.session_id, u.is_active, u.role, s.expires_at
+       FROM sessions s
+       JOIN users u ON u.user_id = s.user_id
+       WHERE s.session_id = $1`,
+      [decoded.sessionId]
+    );
+
+    if (sessionRes.rows.length === 0) {
+      res.status(401).json({ error: 'Unauthorized: Session revoked or not found' });
+      return;
+    }
+
+    const session = sessionRes.rows[0];
+    if (!session.is_active) {
+      res.status(401).json({ error: 'Unauthorized: User account is inactive' });
+      return;
+    }
+
+    if (new Date(session.expires_at) <= new Date()) {
+      res.status(401).json({ error: 'Unauthorized: Session expired' });
+      return;
+    }
+
+    // Authoritative role and active status from current database state, preventing stale JWT claims
+    req.user = {
+      ...decoded,
+      role: session.role as UserRole
+    };
     next();
   } catch {
     res.status(401).json({ error: 'Unauthorized: Token expired or invalid' });
