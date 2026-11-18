@@ -4,7 +4,9 @@
 **Execution Phase:** Phase 10 — Independent Verification & Academic Demonstration Readiness  
 **Target Repository:** `https://github.com/PrasannaMarihalkar/meridian-trading-surveillance`  
 **Target Branch:** `fix/final-teacher-demo-readiness`  
-**Baseline Git Commit:** `c8e5ce5` (`main`)  
+**Verified Git Commit:** `bc60f1c`  
+**Pull Request:** [PR #1: fix/final-teacher-demo-readiness -> main](https://github.com/PrasannaMarihalkar/meridian-trading-surveillance/pull/1)  
+**CI Pipeline Status:** **10/10 Jobs Green** ([Run 44220608279](https://github.com/PrasannaMarihalkar/meridian-trading-surveillance/actions/runs/44220608279))  
 **Lead Systems Architect & Auditor:** Principal Software Engineer & Systems Quality Lead  
 **Student Author:** Prasanna Marihalkar (USN: `PES1UG24CS684`, Git: `@PrasannaMarihalkar`)  
 **Faculty Evaluator:** Dr. Nagasundari S, Department of Computer Science & Engineering, PES University  
@@ -28,6 +30,8 @@ The system was subjected to rigorous empirical testing across two distinct datab
 3. **No Mocks or Fabrications:** Every test assertion, database constraint, C++ sanitizer run, and college query was executed against genuine runtime binaries.
 4. **Native PostgreSQL Vector Architecture:** 8-dimensional behavioral features are stored as native PostgreSQL `DOUBLE PRECISION[] NOT NULL` with `CHECK (array_length(features, 1) = 8)` and computed via mathematical stored procedure `fn_cosine_similarity()`, executing natively without external third-party C extensions (`pgvector`).
 5. **Signed Net Position Model:** The relational schema cleanly models signed long and short positions (`net_qty BIGINT`), bounding short exposure via `Math.abs(currentNet - committedSells - qty) <= max_position_qty`.
+6. **Ticket-Only WebSocket Security:** Deprecated all legacy query-string JWT tokens and message frame JWT auth. Implemented PostgreSQL-backed durable single-use tickets (`ws_tickets`) with atomic delete semantics, 30s TTL, and active session / user deactivation termination.
+7. **Hierarchical Advisory Locks:** Enforced monotonic 2-level advisory locking (Level 1: Account lock -> Level 2: Instrument lock) eliminating cross-instrument cash contention race conditions without deadlock.
 
 ```
 ========================================================================================
@@ -35,15 +39,16 @@ The system was subjected to rigorous empirical testing across two distinct datab
 ========================================================================================
   Repository Hygiene & Git History:    PASS (Clean tree, linear history, pinned v1.0.0)
   PostgreSQL Relational Core:          PASS (17 BCNF tables, 10 atomic sequences, 0 deadlocks)
-  Advisory Locks & Concurrency:        PASS (pg_advisory_xact_lock on instrumentId)
-  Financial Risk & Order Lifecycle:    PASS (IOC/FOK modeled, tick/lot bounds, reserved cash)
+  Advisory Locks & Concurrency:        PASS (Two-level account & instrument advisory locks)
+  Financial Risk & Order Lifecycle:    PASS (Resting order commitments, tick/lot bounds, reserved cash)
   Short Exposure & Collar Bounds:      PASS (Sell position limits, 5% collar buy guard)
   Security, RBAC & Session Lifecycle:  PASS (Durable session invalidation, analyst isolation)
   WebSocket Channel Confidentiality:   PASS (Single-use tickets, 30s TTL, SHA-256, 0 leakage)
-  C++ Engine & ASan/UBSan Memory:      PASS (0 leaks, 0 UB, bounded 20.5 KB gap detector)
-  Automated Test Suites:               PASS (6 suites, 57/57 assertions passing)
+  C++ Engine & ASan/UBSan Memory:      PASS (0 leaks, 0 UB, bounded 20,560 B gap detector)
+  Automated Test Suites:               PASS (6 suites, 61/61 assertions passing)
   College Demonstration Queries:       PASS (17/17 SQL queries executed cleanly)
   Static Analysis & Code Quality:      PASS (0 TypeScript errors, 0 ESLint warnings)
+  Continuous Integration Gate:         PASS (10/10 CI jobs passing in GitHub Actions)
 ----------------------------------------------------------------------------------------
   OVERALL STATUS:                      READY FOR VERIFIED TEACHER DEMO
 ========================================================================================
