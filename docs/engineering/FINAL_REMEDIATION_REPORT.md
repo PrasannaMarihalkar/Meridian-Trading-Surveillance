@@ -39,18 +39,18 @@ The system was subjected to rigorous empirical testing across two distinct datab
 ========================================================================================
   Repository Hygiene & Git History:    PASS (Clean tree, linear history, pinned v1.0.0)
   PostgreSQL Relational Core:          PASS (17 BCNF tables, 10 atomic sequences, 0 deadlocks)
-  Advisory Locks & Concurrency:        PASS (Two-level account & instrument advisory locks)
+  Advisory Locks & Concurrency:        PASS (Two-level account & instrument advisory locks, 0 mutex)
   Financial Risk & Order Lifecycle:    PASS (Resting order commitments, tick/lot bounds, reserved cash)
-  Short Exposure & Collar Bounds:      PASS (Sell position limits, 5% collar buy guard)
+  Short Exposure & Collar Bounds:      PASS (Sell position limits, 2%/5%/8% unified collar guards)
   Security, RBAC & Session Lifecycle:  PASS (Durable session invalidation, analyst isolation)
-  WebSocket Channel Confidentiality:   PASS (Single-use tickets, 30s TTL, SHA-256, 0 leakage)
+  WebSocket Channel Confidentiality:   PASS (Single-use tickets, 30s TTL, fail-closed policy)
   C++ Engine & ASan/UBSan Memory:      PASS (0 leaks, 0 UB, bounded 20,560 B gap detector)
-  Automated Test Suites:               PASS (6 suites, 61/61 assertions passing)
+  Automated Test Suites:               PASS (7 suites, 67/67 assertions passing)
   College Demonstration Queries:       PASS (17/17 SQL queries executed cleanly)
   Static Analysis & Code Quality:      PASS (0 TypeScript errors, 0 ESLint warnings)
   Continuous Integration Gate:         PASS (10/10 CI jobs passing in GitHub Actions)
 ----------------------------------------------------------------------------------------
-  OVERALL STATUS:                      READY FOR VERIFIED TEACHER DEMO
+  OVERALL STATUS:                      READY TO MERGE
 ========================================================================================
 ```
 
@@ -497,4 +497,4 @@ The MERIDIAN system is structurally hardened, architecturally decoupled, mathema
 **Principal Systems Architect & Lead Engineer:**  
 *Prasanna Marihalkar (`PES1UG24CS684`)*  
 **Date:** November 18, 2026  
-**Final Status:** **`READY FOR VERIFIED TEACHER DEMO`**
+**Final Verdict:** **`READY TO MERGE`** (PR #1: `fix/final-teacher-demo-readiness` -> `main`)

@@ -656,6 +656,82 @@ async function run() {
     await new Promise((r) => setTimeout(r, 200));
     assert.strictEqual(closedCode, 4001, 'Revoking session must close socket with code 4001');
     assert.strictEqual(closedReason, 'Session revoked');
+
+    // 7i. Invalid / Forbidden Origin Rejection at Handshake
+    let originRejected = false;
+    try {
+      const wsOrigin = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+        headers: { Origin: 'http://malicious-attacker-domain.xyz' }
+      });
+      await new Promise<void>((resolve, reject) => {
+        wsOrigin.on('open', () => {
+          wsOrigin.close();
+          resolve();
+        });
+        wsOrigin.on('unexpected-response', () => {
+          originRejected = true;
+          resolve();
+        });
+        wsOrigin.on('error', () => {
+          originRejected = true;
+          resolve();
+        });
+      });
+    } catch {
+      originRejected = true;
+    }
+    assert(originRejected, 'Connection from unauthorized origin must be rejected');
+
+    // 7j. User Deactivation Closes Connected Socket with 4002
+    const deactLogin = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/auth/login',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      identifier: 'rahul_marketmaker',
+      password: 'Password123!'
+    });
+    const deactToken = deactLogin.body.token;
+    const deactUserId = deactLogin.body.user.user_id;
+
+    const deactTicketRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/api/auth/ws-ticket',
+      method: 'POST',
+      headers: { Authorization: `Bearer ${deactToken}` }
+    });
+    const deactTicket = deactTicketRes.body.ticket;
+
+    const wsDeact = new WebSocket(`ws://127.0.0.1:${port}/ws?ticket=${deactTicket}`);
+    await new Promise<void>((resolve) => wsDeact.on('open', () => resolve()));
+
+    let deactClosedCode = 0;
+    wsDeact.on('close', (code) => {
+      deactClosedCode = code;
+    });
+
+    // Admin deactivates user via status endpoint
+    await makeRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: `/api/auth/users/${deactUserId}/status`,
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${adminToken}`
+      }
+    }, {
+      isActive: false
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+    assert.strictEqual(deactClosedCode, 4002, 'Deactivating user must close socket with code 4002');
+
+    // Restore user
+    await db.query('UPDATE users SET is_active = TRUE WHERE user_id = $1', [deactUserId]);
   });
 
   // Test 8: Order Submission RBAC: Analyst is explicitly prohibited from submitting orders

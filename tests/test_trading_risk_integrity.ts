@@ -750,6 +750,265 @@ async function run() {
     assert.strictEqual(auditCheck.rows.length, 1, 'Audit log entry must be committed atomically');
   });
 
+  // Test 18: Mandatory clientOrderId at service boundary
+  await test('Idempotency: clientOrderId is mandatory at service boundary without silent fallback', async () => {
+    let emptyCaught = false;
+    try {
+      await TradingService.submitOrder({
+        accountId: 1001,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1350.00,
+        quantity: 5,
+        clientOrderId: '' as any
+      });
+    } catch (err: any) {
+      emptyCaught = true;
+      assert.strictEqual(err.statusCode, 400);
+      assert(err.message.includes('clientOrderId is mandatory'), err.message);
+    }
+    assert(emptyCaught, 'Empty clientOrderId must be rejected with 400');
+
+    let missingCaught = false;
+    try {
+      await TradingService.submitOrder({
+        accountId: 1001,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1350.00,
+        quantity: 5
+      } as any);
+    } catch (err: any) {
+      missingCaught = true;
+      assert.strictEqual(err.statusCode, 400);
+      assert(err.message.includes('clientOrderId is mandatory'), err.message);
+    }
+    assert(missingCaught, 'Missing clientOrderId must be rejected with 400');
+  });
+
+  // Test 19: Comprehensive Idempotency: same-account retry, changed payload 409, cross-account 403
+  await test('Idempotency: identical retry returns existing order, changed payload rejects 409, cross-account rejects 403', async () => {
+    const key = randomUUID();
+    const original = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1350.00,
+      quantity: 5,
+      clientOrderId: key
+    });
+    assert.strictEqual(original.order.status, 'OPEN');
+
+    // 19a. Identical retry returns the original order
+    const retry = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1350.00,
+      quantity: 5,
+      clientOrderId: key
+    });
+    assert.strictEqual(retry.order.order_id, original.order.order_id);
+
+    // 19b. Changed payload with same key returns 409 Conflict
+    let conflictCaught = false;
+    try {
+      await TradingService.submitOrder({
+        accountId: 1001,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1360.00, // Changed price!
+        quantity: 5,
+        clientOrderId: key
+      });
+    } catch (err: any) {
+      conflictCaught = true;
+      assert.strictEqual(err.statusCode, 409);
+      assert(err.message.includes('Idempotency key reused with differing order parameters'), err.message);
+    }
+    assert(conflictCaught, 'Reusing key with different price must return 409');
+
+    // 19c. Different account using same key returns 403 Forbidden
+    let crossAccountCaught = false;
+    try {
+      await TradingService.submitOrder({
+        accountId: 1002, // Different account!
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1350.00,
+        quantity: 5,
+        clientOrderId: key
+      });
+    } catch (err: any) {
+      crossAccountCaught = true;
+      assert.strictEqual(err.statusCode, 403);
+      assert(err.message.includes('Forbidden: clientOrderId belongs to another account'), err.message);
+    }
+    assert(crossAccountCaught, 'Cross-account reuse must return 403 Forbidden');
+  });
+
+  // Test 20: Configurable Per-Account Price Collars (2%, 5%, 8%)
+  await test('Price Collar: configurable per-account collars (2%, 5%, 8%) across BUY/SELL LIMIT & MARKET', async () => {
+    // 20a. 2% Collar
+    await db.query(`UPDATE risk_limits SET price_collar_pct = 2.0 WHERE account_id = 1001`);
+    // Ref price = 1400. 2% collar bounds = [1372.00, 1428.00]
+
+    // Buy limit @ 1435.00 (+2.5%) -> MUST FAIL (exceeds 2% collar)
+    let buy2Fail = false;
+    try {
+      await TradingService.submitOrder({
+        accountId: 1001,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1435.00,
+        quantity: 2,
+        clientOrderId: randomUUID()
+      });
+    } catch (err: any) {
+      buy2Fail = true;
+      assert(err.message.includes('price collar'), err.message);
+    }
+    assert(buy2Fail, '2% collar must reject BUY limit @ 1435.00');
+
+    // Buy limit @ 1380.00 (-1.4%) -> MUST SUCCEED (inside 2% collar [1372.00, 1428.00])
+    const buy2Pass = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1380.00,
+      quantity: 2,
+      clientOrderId: randomUUID()
+    });
+    assert.strictEqual(buy2Pass.order.status, 'OPEN');
+
+    // Sell limit @ 1365.00 (-2.5%) -> MUST FAIL (exceeds 2% collar)
+    let sell2Fail = false;
+    try {
+      await TradingService.submitOrder({
+        accountId: 1001,
+        instrumentId: 1,
+        side: 'SELL',
+        orderType: 'LIMIT',
+        price: 1365.00,
+        quantity: 2,
+        clientOrderId: randomUUID()
+      });
+    } catch (err: any) {
+      sell2Fail = true;
+      assert(err.message.includes('price collar'), err.message);
+    }
+    assert(sell2Fail, '2% collar must reject SELL limit @ 1365.00');
+
+    // 20b. 8% Collar
+    await db.query(`UPDATE risk_limits SET price_collar_pct = 8.0 WHERE account_id = 1001`);
+    // Ref price = 1400. 8% collar bounds = [1288.00, 1512.00]
+
+    // Buy limit @ 1320.00 (-5.7%) -> SUCCEEDS under 8% collar (would fail under 5% collar)
+    const buy8Pass = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'LIMIT',
+      price: 1320.00,
+      quantity: 2,
+      clientOrderId: randomUUID()
+    });
+    assert.strictEqual(buy8Pass.order.status, 'OPEN');
+
+    // Buy limit @ 1280.00 (-8.6%) -> FAILS under 8% collar
+    let buy8Fail = false;
+    try {
+      await TradingService.submitOrder({
+        accountId: 1001,
+        instrumentId: 1,
+        side: 'BUY',
+        orderType: 'LIMIT',
+        price: 1280.00,
+        quantity: 2,
+        clientOrderId: randomUUID()
+      });
+    } catch (err: any) {
+      buy8Fail = true;
+      assert(err.message.includes('price collar'), err.message);
+    }
+    assert(buy8Fail, '8% collar must reject BUY limit @ 1280.00');
+
+    // Reset collar to default 5.0%
+    await db.query(`UPDATE risk_limits SET price_collar_pct = 5.0 WHERE account_id = 1001`);
+  });
+
+  // Test 21: FOK Collar Liquidity Filtering (inside vs outside collar bounds)
+  await test('FOK Collar Liquidity: sums only liquidity strictly inside account collar', async () => {
+    // Set Account 1001 collar to 2.0% (max buy price = 1428.00)
+    await db.query(`UPDATE risk_limits SET price_collar_pct = 2.0 WHERE account_id = 1001`);
+
+    // Place resting liquidity from account 1002:
+    // 10 shares @ 1420.00 (INSIDE 2% collar)
+    await TradingService.submitOrder({
+      accountId: 1002,
+      instrumentId: 1,
+      side: 'SELL',
+      orderType: 'LIMIT',
+      price: 1420.00,
+      quantity: 10,
+      clientOrderId: randomUUID()
+    });
+
+    // 15 shares @ 1440.00 (OUTSIDE 2% collar, deviates +2.86%)
+    await TradingService.submitOrder({
+      accountId: 1002,
+      instrumentId: 1,
+      side: 'SELL',
+      orderType: 'LIMIT',
+      price: 1440.00,
+      quantity: 15,
+      clientOrderId: randomUUID()
+    });
+
+    // Account 1001 submits MARKET FOK for 20 shares
+    // Total book liquidity = 25 shares, but collar-compliant liquidity = 10 shares (< 20)
+    // FOK MUST CANCEL with 0 fills!
+    const fokCollarFail = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'MARKET',
+      timeInForce: 'FOK',
+      price: 0,
+      quantity: 20,
+      clientOrderId: randomUUID()
+    });
+    assert.strictEqual(fokCollarFail.order.status, 'CANCELLED');
+    assert.strictEqual(fokCollarFail.order.status_reason, 'FOK_UNFILLED_INSUFFICIENT_LIQUIDITY');
+    assert.strictEqual(fokCollarFail.trades.length, 0);
+
+    // Account 1001 submits MARKET FOK for 10 shares (matches collar-compliant liquidity)
+    const fokCollarSuccess = await TradingService.submitOrder({
+      accountId: 1001,
+      instrumentId: 1,
+      side: 'BUY',
+      orderType: 'MARKET',
+      timeInForce: 'FOK',
+      price: 0,
+      quantity: 10,
+      clientOrderId: randomUUID()
+    });
+    assert.strictEqual(fokCollarSuccess.order.status, 'FILLED');
+    const totalFilled = fokCollarSuccess.trades.reduce((sum, t) => sum + Number(t.quantity), 0);
+    assert.strictEqual(totalFilled, 10, 'FOK must fill exactly 10 shares from collar-compliant liquidity');
+
+    // Reset collar to default 5.0%
+    await db.query(`UPDATE risk_limits SET price_collar_pct = 5.0 WHERE account_id = 1001`);
+  });
+
   console.log(`\n=== RESULTS: ${passed} PASSED, ${failed} FAILED ===\n`);
   await db.close();
 

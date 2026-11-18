@@ -195,6 +195,18 @@ jobs:
           DATABASE_URL: postgresql://meridian:meridian_ci_password@localhost:5432/meridian_test
           NODE_ENV: test
 
+      - name: Run cross-process concurrency & isolation test (Native PostgreSQL 16)
+        run: npx tsx tests/test_cross_process_concurrency.ts
+        env:
+          DATABASE_URL: postgresql://meridian:meridian_ci_password@localhost:5432/meridian_test
+          NODE_ENV: test
+
+      - name: Run PES University Level 3 DBMS demonstration queries (Native PostgreSQL 16)
+        run: npx tsx scripts/run_demo_queries.ts
+        env:
+          DATABASE_URL: postgresql://meridian:meridian_ci_password@localhost:5432/meridian_test
+          NODE_ENV: test
+
       - name: Run backend API & concurrency verification on embedded PGlite
         run: |
           npx tsx scripts/init_db.ts
@@ -203,6 +215,8 @@ jobs:
           npx tsx tests/test_trading_risk_integrity.ts
           npx tsx tests/api.test.ts
           npx tsx tests/concurrency.test.ts
+          npx tsx tests/test_cross_process_concurrency.ts
+          npx tsx scripts/run_demo_queries.ts
         env:
           DATABASE_URL: ''
           USE_PGLITE: 'true'

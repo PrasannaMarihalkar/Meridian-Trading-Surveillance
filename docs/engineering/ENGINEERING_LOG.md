@@ -233,6 +233,40 @@
      - Formally documented intentional bounded-memory information-loss semantics upon saturation (`gaps_saturated_`).
      - Verified memory safety, split-gap resolution, and saturation under GCC Clang ASan/UBSan sanitizers.
 
-- **Final System Status:** **`READY FOR VERIFIED TEACHER DEMO`** (61/61 tests passing across Native PostgreSQL 16 and PGlite, 17/17 demo queries verified).
+### Entry 006: Final Master Engineering Sign-Off & PR #1 Merge Readiness Pass
+- **Date:** November 18, 2026
+- **Status:** **ENGINEERING SIGN-OFF COMPLETE & READY TO MERGE**
+- **Branch:** `fix/final-teacher-demo-readiness`
+- **Activities & Verified Outcomes:**
+  1. **Strict Idempotency Service Boundary & Ownership Protection (`REQ-TRD-05`):**
+     - Made `clientOrderId: string` strictly mandatory at the service boundary (`TradingService.submitOrder()`), rejecting empty or missing keys with HTTP 400 Bad Request.
+     - Eliminated silent `randomUUID()` fallback from the service layer.
+     - Enforced account ownership verification in both the fast-path idempotency lookup and the `23505` unique-constraint race-recovery path, rejecting cross-account key reuse with HTTP 403 Forbidden.
+     - Guaranteed that no retry path exposes another account's order or trade data.
+     - Validated all immutable order fields (`price`, `quantity`, `side`, `orderType`, `instrumentId`, `timeInForce`), returning HTTP 409 Conflict upon payload mutation.
+  2. **Elimination of In-Process Mutex & Pure PostgreSQL Engine Serialization (`REQ-DBMS-14`):**
+     - Fully removed `matchingMutex` from `submitOrder()` and `cancelOrder()`, proving that correctness and determinism are enforced authoritatively by PostgreSQL transactions and hierarchical transactional advisory locks (`pg_advisory_xact_lock(1, accountId)` and `pg_advisory_xact_lock(2, instrumentId)`).
+     - Verified multi-process serialization and zero cross-instrument cash contention across separate connection pools.
+  3. **Unified Per-Account Price Collar Architecture (`REQ-RSK-05`):**
+     - Unified collar policy across risk validation, MARKET purchasing power reservation, candidate query filtering, FOK preflight liquidity checks, and final matching guards.
+     - Replaced hardcoded 5% in matching with account-configured `price_collar_pct` (supporting 2%, 5%, and 8% limits).
+     - Proved that FOK evaluates only collar-compliant executable liquidity, cancelling with 0 fills when aggregate liquidity within the collar is insufficient.
+  4. **Genuine Cross-Process Concurrency Test Suite (`REQ-CONC-02`):**
+     - Created `tests/concurrency_worker.ts` and `tests/test_cross_process_concurrency.ts`, spawning two independent OS Node.js processes with separate `pg.Pool` connection pools.
+     - Empirically verified zero overfills under same-instrument matching contention, zero overspending under same-account cash contention across different instruments, deterministic cancellation vs matching resolution, and cross-process duplicate key deduplication.
+  5. **WebSocket Fail-Closed Security Policy (`REQ-SEC-13`):**
+     - Implemented fail-closed termination of protected sockets (`ANALYST` and `ADMIN`) with code `4004` if database verification fails during heartbeat intervals.
+     - Added automated regression tests for forbidden origin rejection at handshake (403), user deactivation socket termination (4002), and expired ticket rejection.
+  6. **Docker & Runtime Dependencies (`REQ-OPS-03`):**
+     - Moved `tsx` to runtime `dependencies` in `package.json`, ensuring `npm start` executes reliably in production containers and environments using `--omit=dev`.
+     - Synchronized sequence alignment between `scripts/init_db.ts` and `03_seed_data.sql`.
+  7. **Comprehensive Test Suite & Demonstration Alignment:**
+     - 7 automated test suites passing (66/66 assertions passing across Native PG 16 and PGlite).
+     - 17/17 college demonstration queries verified.
+     - C++ ASan/UBSan clean (5/5 suites passing, 0 leaks, 0 UB, bounded 20,560 B gap detector).
+     - 0 TypeScript errors (strict mode across backend and frontend), 0 ESLint warnings.
+
+- **Final System Status:** **`READY TO MERGE`** (PR #1 fully verified).
+
 
 

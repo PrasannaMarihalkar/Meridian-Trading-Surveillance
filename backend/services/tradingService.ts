@@ -1,4 +1,3 @@
-import { randomUUID } from 'crypto';
 import { getDatabase, IDatabase, ITransactionClient } from '../../database/db';
 import { Order, OrderSide, OrderType, TimeInForce, Trade } from '../types';
 import { broadcastMarketData } from '../websocket';
@@ -11,34 +10,18 @@ export interface PlaceOrderInput {
   timeInForce?: TimeInForce;
   price: number;
   quantity: number;
-  clientOrderId?: string;
+  clientOrderId: string;
 }
 
 /**
- * Sequential execution mutex to guarantee strict deterministic order matching,
- * atomic transaction isolation, and eliminate race conditions on sequence generation.
+ * Concurrency Architecture Note:
+ * Concurrency correctness, multi-process serialization, and race-condition prevention
+ * are enforced authoritatively at the database engine level via PostgreSQL Transactional
+ * Advisory Locks (Namespace 1: Account lock, Namespace 2: Instrument lock) and row-level
+ * SELECT ... FOR UPDATE locks. In-process mutexes are intentionally omitted from the
+ * critical path so that horizontal scale across multiple Node.js worker processes and
+ * connections operates safely and deterministically without cross-process bifurcation.
  */
-class ExecutionMutex {
-  private queue: Promise<void> = Promise.resolve();
-
-  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    let release: () => void;
-    const ticket = new Promise<void>(resolve => {
-      release = resolve;
-    });
-    const previous = this.queue;
-    this.queue = ticket;
-
-    await previous;
-    try {
-      return await fn();
-    } finally {
-      release!();
-    }
-  }
-}
-
-const matchingMutex = new ExecutionMutex();
 
 function normalizeOrder(order: Order): Order {
   return {
@@ -229,150 +212,164 @@ export class TradingService {
    * Submit and Match Order (Atomic Transaction with Row-Level Locking and Guaranteed Connection Affinity)
    */
   static async submitOrder(input: PlaceOrderInput): Promise<{ order: Order; trades: Trade[] }> {
-    return matchingMutex.runExclusive(async () => {
-      const db = await getDatabase();
-      const clientOrderId = input.clientOrderId || randomUUID();
+    const db = await getDatabase();
 
-      // Fast-path idempotency check: outside transaction to avoid connection holding
-      const existingRes = await db.query<Order>(
-        `SELECT * FROM orders WHERE client_order_id = $1`,
-        [clientOrderId]
-      );
+    // 1. Strict Service Boundary Idempotency Validation
+    if (!input.clientOrderId || typeof input.clientOrderId !== 'string' || input.clientOrderId.trim().length === 0) {
+      const err = new Error('clientOrderId is mandatory at the service boundary and cannot be empty');
+      (err as unknown as { statusCode: number }).statusCode = 400;
+      throw err;
+    }
+    const clientOrderId = input.clientOrderId.trim();
 
-      if (existingRes.rows.length > 0) {
-        const existing = existingRes.rows[0];
-        // Verify account ownership
-        if (Number(existing.account_id) !== Number(input.accountId)) {
-          const err = new Error('Forbidden: clientOrderId belongs to another account');
-          (err as unknown as { statusCode: number }).statusCode = 403;
-          throw err;
-        }
+    // Fast-path idempotency check: outside transaction to avoid connection holding
+    const existingRes = await db.query<Order>(
+      `SELECT * FROM orders WHERE client_order_id = $1`,
+      [clientOrderId]
+    );
 
-        // Verify payload parameters match
-        const expectedTif = input.timeInForce || 'DAY';
-        const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
-        const qtyMatches = Number(existing.quantity) === Number(input.quantity);
-        const sideMatches = existing.side === input.side;
-        const typeMatches = existing.order_type === input.orderType;
-        const instMatches = Number(existing.instrument_id) === Number(input.instrumentId);
-        const tifMatches = existing.time_in_force === expectedTif;
-
-        if (!priceMatches || !qtyMatches || !sideMatches || !typeMatches || !instMatches || !tifMatches) {
-          const err = new Error('Idempotency key reused with differing order parameters');
-          (err as unknown as { statusCode: number }).statusCode = 409;
-          throw err;
-        }
-
-        // Legitimate retry: return existing order and its executed trades
-        const existingTradesRes = await db.query<Trade>(
-          `SELECT * FROM trades WHERE buy_order_id = $1 OR sell_order_id = $1 ORDER BY trade_id ASC`,
-          [existing.order_id]
-        );
-
-        return { order: normalizeOrder(existing), trades: normalizeTrades(existingTradesRes.rows) };
+    if (existingRes.rows.length > 0) {
+      const existing = existingRes.rows[0];
+      // Verify account ownership
+      if (Number(existing.account_id) !== Number(input.accountId)) {
+        const err = new Error('Forbidden: clientOrderId belongs to another account');
+        (err as unknown as { statusCode: number }).statusCode = 403;
+        throw err;
       }
 
-      let activeOrder: Order | null = null;
-      const trades: Trade[] = [];
+      // Verify payload parameters match
+      const expectedTif = input.timeInForce || 'DAY';
+      const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
+      const qtyMatches = Number(existing.quantity) === Number(input.quantity);
+      const sideMatches = existing.side === input.side;
+      const typeMatches = existing.order_type === input.orderType;
+      const instMatches = Number(existing.instrument_id) === Number(input.instrumentId);
+      const tifMatches = existing.time_in_force === expectedTif;
 
-      try {
-        await db.transaction(async (tx) => {
-          // Global deadlock-free hierarchical locking:
-          // 1. Account Advisory Lock (Namespace 1) serializing cash balance & open order reservations
-          await tx.query('SELECT pg_advisory_xact_lock(1, $1)', [input.accountId]);
-          // 2. Instrument Advisory Lock (Namespace 2) serializing order matching for the instrument
-          await tx.query('SELECT pg_advisory_xact_lock(2, $1)', [input.instrumentId]);
+      if (!priceMatches || !qtyMatches || !sideMatches || !typeMatches || !instMatches || !tifMatches) {
+        const err = new Error('Idempotency key reused with differing order parameters');
+        (err as unknown as { statusCode: number }).statusCode = 409;
+        throw err;
+      }
 
-          // Pre-trade risk validation inside the transaction boundary
-          await this.validateRiskLimits(input, tx);
+      // Legitimate retry: return existing order and its executed trades
+      const existingTradesRes = await db.query<Trade>(
+        `SELECT * FROM trades WHERE buy_order_id = $1 OR sell_order_id = $1 ORDER BY trade_id ASC`,
+        [existing.order_id]
+      );
 
-          // Atomic sequence allocation for Order ID
-          const oidRes = await tx.query(`SELECT nextval('order_id_seq') AS next_id`);
-          const orderId = parseInt(oidRes.rows[0].next_id, 10);
+      return { order: normalizeOrder(existing), trades: normalizeTrades(existingTradesRes.rows) };
+    }
 
-          const tif = input.timeInForce || 'DAY';
+    let activeOrder: Order | null = null;
+    const trades: Trade[] = [];
 
-          // Insert Order as OPEN
-          const orderRes = await tx.query<Order>(
-            `INSERT INTO orders (
-               order_id, client_order_id, account_id, instrument_id, side, order_type, time_in_force,
-               price, quantity, filled_qty, status, submitted_at, updated_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 'OPEN', NOW(), NOW())
-             RETURNING *`,
-            [
-              orderId,
-              clientOrderId,
-              input.accountId,
-              input.instrumentId,
-              input.side,
-              input.orderType,
-              tif,
-              input.price,
-              input.quantity
-            ]
+    try {
+      await db.transaction(async (tx) => {
+        // Global deadlock-free hierarchical locking:
+        // 1. Account Advisory Lock (Namespace 1) serializing cash balance & open order reservations
+        await tx.query('SELECT pg_advisory_xact_lock(1, $1)', [input.accountId]);
+        // 2. Instrument Advisory Lock (Namespace 2) serializing order matching for the instrument
+        await tx.query('SELECT pg_advisory_xact_lock(2, $1)', [input.instrumentId]);
+
+        // Pre-trade risk validation inside the transaction boundary
+        await this.validateRiskLimits(input, tx);
+
+        // Atomic sequence allocation for Order ID
+        const oidRes = await tx.query(`SELECT nextval('order_id_seq') AS next_id`);
+        const orderId = parseInt(oidRes.rows[0].next_id, 10);
+
+        const tif = input.timeInForce || 'DAY';
+
+        // Insert Order as OPEN
+        const orderRes = await tx.query<Order>(
+          `INSERT INTO orders (
+             order_id, client_order_id, account_id, instrument_id, side, order_type, time_in_force,
+             price, quantity, filled_qty, status, submitted_at, updated_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 'OPEN', NOW(), NOW())
+           RETURNING *`,
+          [
+            orderId,
+            clientOrderId,
+            input.accountId,
+            input.instrumentId,
+            input.side,
+            input.orderType,
+            tif,
+            input.price,
+            input.quantity
+          ]
+        );
+
+        activeOrder = orderRes.rows[0];
+
+        // Candidate Orders for Matching with Unified Per-Account Price Collar
+        const oppositeSide: OrderSide = input.side === 'BUY' ? 'SELL' : 'BUY';
+        const sortOrder = input.side === 'BUY' ? 'ASC' : 'DESC';
+
+        const collarRes = await tx.query(
+          `SELECT i.reference_price, rl.price_collar_pct
+           FROM instruments i
+           LEFT JOIN risk_limits rl ON rl.account_id = $1
+           WHERE i.instrument_id = $2`,
+          [input.accountId, input.instrumentId]
+        );
+        const refPrice = parseFloat(collarRes.rows[0].reference_price);
+        const collarLimitPct = collarRes.rows[0]?.price_collar_pct
+          ? parseFloat(collarRes.rows[0].price_collar_pct)
+          : 5.0;
+        const maxCollarPrice = refPrice * (1 + collarLimitPct / 100);
+        const minCollarPrice = refPrice * (1 - collarLimitPct / 100);
+
+        let candidateSql: string;
+        let candidateParams: (string | number)[];
+
+        if (input.orderType === 'MARKET') {
+          const collarCondition = input.side === 'BUY' ? 'AND price <= $4' : 'AND price >= $4';
+          const collarLimitPrice = input.side === 'BUY' ? maxCollarPrice : minCollarPrice;
+          candidateSql = `
+            SELECT order_id, account_id, price, quantity, filled_qty, (quantity - filled_qty) AS leaves_qty
+            FROM orders
+            WHERE instrument_id = $1 AND side = $2 AND account_id <> $3 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND (quantity - filled_qty) > 0
+            ${collarCondition}
+            ORDER BY price ${sortOrder}, submitted_at ASC, order_id ASC
+            FOR UPDATE
+          `;
+          candidateParams = [input.instrumentId, oppositeSide, input.accountId, collarLimitPrice];
+        } else {
+          const priceCondition = input.side === 'BUY' ? 'AND price <= $4' : 'AND price >= $4';
+          candidateSql = `
+            SELECT order_id, account_id, price, quantity, filled_qty, (quantity - filled_qty) AS leaves_qty
+            FROM orders
+            WHERE instrument_id = $1 AND side = $2 AND account_id <> $3 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND (quantity - filled_qty) > 0
+            ${priceCondition}
+            ORDER BY price ${sortOrder}, submitted_at ASC, order_id ASC
+            FOR UPDATE
+          `;
+          candidateParams = [input.instrumentId, oppositeSide, input.accountId, input.price];
+        }
+
+        const candidates = await tx.query(candidateSql, candidateParams);
+
+        const activeTotalQty = parseInt(String(activeOrder.quantity), 10);
+        let remainingQty = activeTotalQty;
+
+        // Fill-Or-Kill (FOK) All-Or-None Validation on executable collar-compliant liquidity
+        if (tif === 'FOK') {
+          const availableLiquidity = candidates.rows.reduce(
+            (sum, r) => sum + parseInt(String(r.leaves_qty), 10),
+            0
           );
-
-          activeOrder = orderRes.rows[0];
-
-          // Candidate Orders for Matching with Pre-filtered Price Collar
-          const oppositeSide: OrderSide = input.side === 'BUY' ? 'SELL' : 'BUY';
-          const sortOrder = input.side === 'BUY' ? 'ASC' : 'DESC';
-
-          const instRefRes = await tx.query(`SELECT reference_price FROM instruments WHERE instrument_id = $1`, [input.instrumentId]);
-          const refPrice = parseFloat(instRefRes.rows[0].reference_price);
-          const collarLimitPct = 5.0;
-          const maxCollarPrice = refPrice * (1 + collarLimitPct / 100);
-          const minCollarPrice = refPrice * (1 - collarLimitPct / 100);
-
-          let candidateSql: string;
-          let candidateParams: (string | number)[];
-
-          if (input.orderType === 'MARKET') {
-            const collarCondition = input.side === 'BUY' ? 'AND price <= $4' : 'AND price >= $4';
-            const collarLimitPrice = input.side === 'BUY' ? maxCollarPrice : minCollarPrice;
-            candidateSql = `
-              SELECT order_id, account_id, price, quantity, filled_qty, (quantity - filled_qty) AS leaves_qty
-              FROM orders
-              WHERE instrument_id = $1 AND side = $2 AND account_id <> $3 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND (quantity - filled_qty) > 0
-              ${collarCondition}
-              ORDER BY price ${sortOrder}, submitted_at ASC, order_id ASC
-              FOR UPDATE
-            `;
-            candidateParams = [input.instrumentId, oppositeSide, input.accountId, collarLimitPrice];
-          } else {
-            const priceCondition = input.side === 'BUY' ? 'AND price <= $4' : 'AND price >= $4';
-            candidateSql = `
-              SELECT order_id, account_id, price, quantity, filled_qty, (quantity - filled_qty) AS leaves_qty
-              FROM orders
-              WHERE instrument_id = $1 AND side = $2 AND account_id <> $3 AND status IN ('OPEN', 'PARTIALLY_FILLED') AND (quantity - filled_qty) > 0
-              ${priceCondition}
-              ORDER BY price ${sortOrder}, submitted_at ASC, order_id ASC
-              FOR UPDATE
-            `;
-            candidateParams = [input.instrumentId, oppositeSide, input.accountId, input.price];
-          }
-
-          const candidates = await tx.query(candidateSql, candidateParams);
-
-          const activeTotalQty = parseInt(String(activeOrder.quantity), 10);
-          let remainingQty = activeTotalQty;
-
-          // Fill-Or-Kill (FOK) All-Or-None Validation on executable collar-compliant liquidity
-          if (tif === 'FOK') {
-            const availableLiquidity = candidates.rows.reduce(
-              (sum, r) => sum + parseInt(String(r.leaves_qty), 10),
-              0
+          if (availableLiquidity < activeTotalQty) {
+            const updatedActiveRes = await tx.query<Order>(
+              `UPDATE orders SET status = 'CANCELLED', status_reason = 'FOK_UNFILLED_INSUFFICIENT_LIQUIDITY', updated_at = NOW()
+               WHERE order_id = $1 RETURNING *`,
+              [activeOrder.order_id]
             );
-            if (availableLiquidity < activeTotalQty) {
-              const updatedActiveRes = await tx.query<Order>(
-                `UPDATE orders SET status = 'CANCELLED', status_reason = 'FOK_UNFILLED_INSUFFICIENT_LIQUIDITY', updated_at = NOW()
-                 WHERE order_id = $1 RETURNING *`,
-                [activeOrder.order_id]
-              );
-              activeOrder = updatedActiveRes.rows[0];
-              return;
-            }
+            activeOrder = updatedActiveRes.rows[0];
+            return;
           }
+        }
 
           for (const resting of candidates.rows) {
             if (remainingQty <= 0) break;
@@ -499,7 +496,7 @@ export class TradingService {
           activeOrder = updatedActiveRes.rows[0];
         });
       } catch (err: unknown) {
-        // Check if duplicate client_order_id was inserted concurrently
+        // Check if duplicate client_order_id was inserted concurrently (race-recovery path)
         if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === '23505') {
           const concurrentRes = await db.query<Order>(
             `SELECT * FROM orders WHERE client_order_id = $1`,
@@ -507,6 +504,14 @@ export class TradingService {
           );
           if (concurrentRes.rows.length > 0) {
             const existing = concurrentRes.rows[0];
+            // Mandatory ownership verification in unique-constraint race recovery:
+            // Never expose another account's order or trade data
+            if (Number(existing.account_id) !== Number(input.accountId)) {
+              const forbidErr = new Error('Forbidden: clientOrderId belongs to another account');
+              (forbidErr as unknown as { statusCode: number }).statusCode = 403;
+              throw forbidErr;
+            }
+
             const expectedTif = input.timeInForce || 'DAY';
             const priceMatches = Math.abs(parseFloat(String(existing.price)) - input.price) < 0.0001;
             const qtyMatches = Number(existing.quantity) === Number(input.quantity);
@@ -554,7 +559,6 @@ export class TradingService {
       }
 
       return { order: normalizeOrder(activeOrder!), trades: normalizeTrades(trades) };
-    });
   }
 
   /**
@@ -565,62 +569,67 @@ export class TradingService {
     accountId: number,
     adminAudit?: { actorUserId: number; reason: string }
   ): Promise<Order> {
-    return matchingMutex.runExclusive(async () => {
-      const db = await getDatabase();
-      let cancelledOrder: Order | null = null;
+    const db = await getDatabase();
+    let cancelledOrder: Order | null = null;
 
-      await db.transaction(async (tx) => {
-        const orderRes = await tx.query<Order>(
-          `SELECT * FROM orders WHERE order_id = $1 AND account_id = $2 FOR UPDATE`,
-          [orderId, accountId]
-        );
+    await db.transaction(async (tx) => {
+      // 1. Account Advisory Lock (Namespace 1) serializing account lifecycle
+      await tx.query('SELECT pg_advisory_xact_lock(1, $1)', [accountId]);
 
-        if (orderRes.rows.length === 0) {
-          throw new Error(`Order ${orderId} not found or unauthorized`);
-        }
+      const orderRes = await tx.query<Order>(
+        `SELECT * FROM orders WHERE order_id = $1 AND account_id = $2 FOR UPDATE`,
+        [orderId, accountId]
+      );
 
-        const order = orderRes.rows[0];
-        if (order.status !== 'OPEN' && order.status !== 'PARTIALLY_FILLED') {
-          throw new Error(`Order ${orderId} cannot be cancelled in state ${order.status}`);
-        }
-
-        const updated = await tx.query<Order>(
-          `UPDATE orders SET status = 'CANCELLED', cancel_requested_at = NOW(), updated_at = NOW()
-           WHERE order_id = $1 RETURNING *`,
-          [orderId]
-        );
-
-        cancelledOrder = updated.rows[0];
-
-        // Atomic administrative cancellation audit logging inside the transaction boundary
-        if (adminAudit) {
-          if (!adminAudit.reason || adminAudit.reason.trim().length === 0) {
-            throw new Error('Administrative cancellation requires a non-empty reason');
-          }
-          await tx.query(
-            `INSERT INTO audit_log (audit_id, occurred_at, actor_user_id, action, entity_type, entity_id, new_data)
-             VALUES (nextval('audit_log_id_seq'), NOW(), $1, 'ADMIN_ORDER_CANCEL', 'orders', $2, $3::JSONB)`,
-            [adminAudit.actorUserId, String(orderId), JSON.stringify({ reason: adminAudit.reason, order_id: orderId })]
-          );
-        }
-      });
-
-      // Real-time Order Book depth update after cancellation (after commit)
-      if (cancelledOrder) {
-        try {
-          const snapshot = await this.getOrderBookSnapshot((cancelledOrder as Order).instrument_id, 10);
-          broadcastMarketData({
-            type: 'BOOK_UPDATE',
-            data: { instrumentId: (cancelledOrder as Order).instrument_id, snapshot },
-            timestamp: new Date().toISOString()
-          });
-        } catch (wsErr) {
-          console.warn('[WS_BROADCAST] Cancel market broadcast error:', wsErr);
-        }
+      if (orderRes.rows.length === 0) {
+        throw new Error(`Order ${orderId} not found or unauthorized`);
       }
 
-      return normalizeOrder(cancelledOrder!);
+      const order = orderRes.rows[0];
+      // 2. Instrument Advisory Lock (Namespace 2) serializing order matching determinism
+      await tx.query('SELECT pg_advisory_xact_lock(2, $1)', [order.instrument_id]);
+
+      if (order.status !== 'OPEN' && order.status !== 'PARTIALLY_FILLED') {
+        throw new Error(`Order ${orderId} cannot be cancelled in state ${order.status}`);
+      }
+
+      const updated = await tx.query<Order>(
+        `UPDATE orders SET status = 'CANCELLED', cancel_requested_at = NOW(), updated_at = NOW()
+         WHERE order_id = $1 RETURNING *`,
+        [orderId]
+      );
+
+      cancelledOrder = updated.rows[0];
+
+      // Atomic administrative cancellation audit logging inside the transaction boundary
+      if (adminAudit) {
+        if (!adminAudit.reason || adminAudit.reason.trim().length === 0) {
+          throw new Error('Administrative cancellation requires a non-empty reason');
+        }
+        await tx.query(
+          `INSERT INTO audit_log (audit_id, occurred_at, actor_user_id, action, entity_type, entity_id, new_data)
+           VALUES (nextval('audit_log_id_seq'), NOW(), $1, 'ADMIN_ORDER_CANCEL', 'orders', $2, $3::JSONB)`,
+          [adminAudit.actorUserId, String(orderId), JSON.stringify({ reason: adminAudit.reason, order_id: orderId })]
+        );
+      }
     });
+
+    // Real-time Order Book depth update after cancellation (after commit)
+    if (cancelledOrder) {
+      try {
+        const order = cancelledOrder as Order;
+        const snapshot = await this.getOrderBookSnapshot(order.instrument_id, 10);
+        broadcastMarketData({
+          type: 'BOOK_UPDATE',
+          data: { instrumentId: order.instrument_id, snapshot },
+          timestamp: new Date().toISOString()
+        });
+      } catch (wsErr) {
+        console.warn('[WS_BROADCAST] Cancel market broadcast error:', wsErr);
+      }
+    }
+
+    return normalizeOrder(cancelledOrder!);
   }
 
   /**

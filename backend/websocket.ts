@@ -228,8 +228,23 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
             }
           }
         }
-      } catch {
-        // Suppress heartbeat DB check failure if DB is restarting
+      } catch (err) {
+        // Fail-closed security policy: if database verification fails during heartbeat (e.g. outage or partition),
+        // terminate sensitive authenticated sockets (ANALYST / ADMIN) immediately to prevent
+        // unauthorized access or stale privilege retention during DB outages.
+        console.error('[WS] Database heartbeat verification error - executing fail-closed termination of protected sockets:', err);
+        for (const client of wssInstance.clients) {
+          const ws = client as AuthenticatedWebSocket;
+          if (ws.user && (ws.user.role === 'ANALYST' || ws.user.role === 'ADMIN')) {
+            try {
+              ws.send(JSON.stringify({
+                type: 'AUTH_ERROR',
+                message: 'Database verification failure - failing closed'
+              }));
+              ws.close(4004, 'Database verification failure');
+            } catch {}
+          }
+        }
       }
     }
   }, 10000);
