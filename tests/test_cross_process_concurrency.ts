@@ -97,11 +97,17 @@ async function runCrossProcessConcurrencyVerification() {
      ON CONFLICT (user_id) DO NOTHING`
   );
 
+  // Helper to completely reset test accounts, open orders, trades, and positions between test cases
+  async function resetTestState() {
+    await db.query(`DELETE FROM fills WHERE account_id IN ($1, $2, $3)`, [buyerAccA, buyerAccB, sellerAccC]);
+    await db.query(`DELETE FROM trades WHERE buyer_account_id IN ($1, $2, $3) OR seller_account_id IN ($1, $2, $3)`, [buyerAccA, buyerAccB, sellerAccC]);
+    await db.query(`DELETE FROM orders WHERE account_id IN ($1, $2, $3)`, [buyerAccA, buyerAccB, sellerAccC]);
+    await db.query(`DELETE FROM positions WHERE account_id IN ($1, $2, $3)`, [buyerAccA, buyerAccB, sellerAccC]);
+    await db.query(`UPDATE accounts SET cash_balance = 50000.00 WHERE account_id IN ($1, $2, $3)`, [buyerAccA, buyerAccB, sellerAccC]);
+  }
+
   // Clean existing data for these test accounts
-  await db.query(`DELETE FROM fills WHERE account_id IN ($1, $2, $3)`, [buyerAccA, buyerAccB, sellerAccC]);
-  await db.query(`DELETE FROM trades WHERE buyer_account_id IN ($1, $2, $3) OR seller_account_id IN ($1, $2, $3)`, [buyerAccA, buyerAccB, sellerAccC]);
-  await db.query(`DELETE FROM orders WHERE account_id IN ($1, $2, $3)`, [buyerAccA, buyerAccB, sellerAccC]);
-  await db.query(`DELETE FROM positions WHERE account_id IN ($1, $2, $3)`, [buyerAccA, buyerAccB, sellerAccC]);
+  await resetTestState();
 
   // Insert test accounts
   await db.query(
@@ -189,6 +195,7 @@ async function runCrossProcessConcurrencyVerification() {
 
   // TEST 2: Same-Account Cash Contention across Different Instruments
   console.log('\n[TEST 2] Same-Account Cash Contention across Different Instruments (Process A & B compete for account cash)...');
+  await resetTestState();
   {
     // Set Buyer A cash to exactly 18,000.00
     await db.query(`UPDATE accounts SET cash_balance = 18000.00 WHERE account_id = $1`, [buyerAccA]);
@@ -235,13 +242,14 @@ async function runCrossProcessConcurrencyVerification() {
 
   // TEST 3: Cancellation Racing with Matching across Processes
   console.log('\n[TEST 3] Cancellation Racing with Matching across Separate Processes...');
+  await resetTestState();
   {
     const restSell = await TradingService.submitOrder({
       accountId: sellerAccC,
       instrumentId: 1,
       side: 'SELL',
       orderType: 'LIMIT',
-      price: 1400.00,
+      price: 1425.00,
       quantity: 15,
       clientOrderId: randomUUID()
     });
@@ -253,7 +261,7 @@ async function runCrossProcessConcurrencyVerification() {
       instrumentId: 1,
       side: 'BUY',
       orderType: 'LIMIT',
-      price: 1400.00,
+      price: 1425.00,
       quantity: 15,
       clientOrderId: randomUUID()
     };
@@ -282,6 +290,7 @@ async function runCrossProcessConcurrencyVerification() {
 
   // TEST 4: Cross-Process Duplicate Idempotency Keys
   console.log('\n[TEST 4] Cross-Process Duplicate Idempotency Key Handling...');
+  await resetTestState();
   {
     const sharedKey = randomUUID();
     const identicalInput: PlaceOrderInput = {
